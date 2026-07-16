@@ -110,6 +110,15 @@
     border-radius:.5rem;padding:.6rem .9rem;margin-bottom:1rem}
   .model-hint{font-size:.75rem;color:#888;margin-top:.3rem}
 
+  /* Relevance-filter transparency (PRISMA-style): muted note + closed glass details */
+  .filtered-note{font-size:.8rem;color:#888;margin:.2rem 0 .4rem}
+  .filtered-section{margin:.3rem 0 .8rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,171,76,.25);
+    border-radius:.6rem;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+  .filtered-section summary{font-size:.8rem;color:#ffab4c;padding:.5rem .8rem;cursor:pointer;user-select:none}
+  .filtered-section summary:hover{color:#ffc98a}
+  .filtered-section ul.li{padding:0 .8rem .6rem;margin:0}
+  .filtered-conds{font-size:.75rem;color:#888;font-style:italic;margin-top:.15rem}
+
   footer{text-align:center;padding:2rem;color:#666;border-top:1px solid rgba(255,255,255,.05);font-size:.85rem}
   footer a{color:#00d4ff;text-decoration:none}footer a:hover{text-decoration:underline}
   @media(max-width:768px){
@@ -118,6 +127,7 @@
     .search-box{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem}
     .card{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:1.2rem}
     .ai-panel{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem 1rem}
+    .filtered-section{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
     .modal-content{padding:1.1rem}
   }
 </style>
@@ -379,11 +389,23 @@ function renderBody(r){
   // compare side-by-side
   if(r.drug_a&&r.drug_b) return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
       ${sideCard(r.drug_a)}${sideCard(r.drug_b)}</div>`+rawDetails(r);
-  // trials/results table
+  // trials/results table (with the relevance-filter note when present)
   const arr=r.results||r.trials||r.sources||null;
-  if(Array.isArray(arr)) return `<div class="rcard">${scalarChips(r)}${objTable(arr)}</div>`;
+  if(Array.isArray(arr)) return `<div class="rcard">${scalarChips(r)}${filteredNote(r)}${objTable(arr)}</div>`;
   // generic object
   return `<div class="rcard">${scalarChips(r)}${nestedArrays(r)}${rawDetails(r)}</div>`;
+}
+
+// Relevance-filter transparency: when the server's gate hid off-topic trials
+// (result.filtered_out / filtered_count), show a muted note plus a closed
+// glass <details> listing them (id + title + conditions) — nothing is silent.
+function filteredNote(r){
+  const n=r.filtered_count, hid=r.filtered_out;
+  if(!n||!Array.isArray(hid)||!hid.length) return "";
+  const items=hid.map(x=>`<li><b>${esc(x.id||"")}</b> ${esc(x.title||"")}
+    ${Array.isArray(x.conditions)&&x.conditions.length?`<div class="filtered-conds">${esc(x.conditions.join(" · "))}</div>`:""}</li>`).join("");
+  return `<div class="filtered-note">🚫 ${n} off-topic trial${n===1?"":"s"} hidden by relevance filter</div>
+    <details class="filtered-section"><summary>Show hidden trials (${n})</summary><ul class="li">${items}</ul></details>`;
 }
 
 function sideCard(x){return `<div class="rcard"><h3>${esc(x.name||x.drug||"—")}</h3>${scalarChips(x)}</div>`;}

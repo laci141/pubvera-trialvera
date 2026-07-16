@@ -34,6 +34,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 )
 
 func cliBinaryPath() string {
@@ -383,6 +384,12 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 	var result json.RawMessage
 	if json.Valid(raw) {
 		result = raw
+		// Web-side relevance gate (search only): partition off-topic trials
+		// out of result.results BEFORE both display and the LLM prompt below.
+		// Best-effort — any doubt passes the JSON through unchanged.
+		if group == "search-discovery" && relevanceGatedCmds[cmd] && len(inputs) > 0 {
+			result = relevanceGate(result, inputs[0])
+		}
 	} else {
 		// Some commands (version, help) print plain text; wrap it so the
 		// response stays valid JSON instead of erroring.
@@ -407,6 +414,158 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ---- relevance gate (search results) -----------------------------------------
+//
+// The clinical-trials CLI matches by broad FTS full-text search with no
+// condition filter, so a "diabetes" search can return Preterm Birth or
+// Parkinson trials. This web-side gate partitions result.results[] into
+// on-topic and off-topic BEFORE display and BEFORE the LLM prompt. It is
+// deliberately conservative: any parse doubt keeps the trial (or passes the
+// whole JSON through unchanged), and nothing is silently lost — dropped trials
+// move to result.filtered_out with result.filtered_count alongside.
+
+// relevanceGatedCmds names the commands whose output goes through the gate.
+// Only search: digest's JSON is {term,total,recruiting,newest[],…} with no
+// results[]/conditions[] to judge (verified in cli-src/internal/cli/digest.go).
+var relevanceGatedCmds = map[string]bool{"search": true}
+
+// gateStopwords are English filler words dropped from the query before
+// matching. Most are under the 3-char length floor anyway; listed in full so
+// the rule reads explicitly.
+var gateStopwords = map[string]struct{}{
+	"in": {}, "of": {}, "the": {}, "and": {}, "for": {}, "with": {},
+	"to": {}, "on": {}, "a": {}, "an": {}, "or": {}, "vs": {},
+}
+
+// foldAccents maps accented Latin letters to their base letter so "sclérose"
+// matches "sclerose". Dependency-free (no x/text): Latin-1 Supplement plus the
+// Hungarian long vowels from Latin Extended-A. Unlisted runes pass through.
+var foldAccents = map[rune]rune{
+	'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a',
+	'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+	'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+	'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ő': 'o',
+	'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ű': 'u',
+	'ç': 'c', 'ñ': 'n', 'ý': 'y', 'ÿ': 'y',
+}
+
+// normalizeGateText lowercases and folds accents; applied identically to the
+// query tokens and to every trial haystack so both sides compare in the same
+// alphabet.
+func normalizeGateText(s string) string {
+	s = strings.ToLower(s)
+	return strings.Map(func(r rune) rune {
+		if b, ok := foldAccents[r]; ok {
+			return b
+		}
+		return r
+	}, s)
+}
+
+// contentTokens tokenizes the user's query for the relevance gate: lowercase,
+// accents folded, split on non-alphanumeric runes, then tokens shorter than 3
+// chars and stopwords dropped. An empty return DISABLES the gate — an empty or
+// too-short query must never filter anything.
+func contentTokens(query string) []string {
+	fields := strings.FieldsFunc(normalizeGateText(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if len(f) < 3 {
+			continue
+		}
+		if _, stop := gateStopwords[f]; stop {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// trialRelevant reports whether ANY content token appears (case-insensitive,
+// accent-folded substring) in ANY of the trial's conditions[], title, or
+// interventions[]. A trial whose shape can't be parsed is kept — the gate must
+// never drop what it can't judge.
+func trialRelevant(entry json.RawMessage, tokens []string) bool {
+	var t struct {
+		Title         string   `json:"title"`
+		Conditions    []string `json:"conditions"`
+		Interventions []string `json:"interventions"`
+	}
+	if err := json.Unmarshal(entry, &t); err != nil {
+		return true
+	}
+	parts := make([]string, 0, 1+len(t.Conditions)+len(t.Interventions))
+	parts = append(parts, t.Title)
+	parts = append(parts, t.Conditions...)
+	parts = append(parts, t.Interventions...)
+	hay := normalizeGateText(strings.Join(parts, "\n"))
+	for _, tok := range tokens {
+		if strings.Contains(hay, tok) {
+			return true
+		}
+	}
+	return false
+}
+
+// relevanceGate applies the gate to one search response. Kept trials are
+// passed through byte-identical (json.RawMessage, never re-marshaled
+// individually); dropped trials move to filtered_out. On ANY doubt — no
+// content tokens, unparseable JSON, missing/odd results shape, marshal
+// failure — the input is returned unchanged. When nothing is dropped the
+// input is returned byte-identical (no filtered_out/filtered_count added).
+func relevanceGate(raw []byte, query string) []byte {
+	tokens := contentTokens(query)
+	if len(tokens) == 0 {
+		return raw
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	rawList, ok := obj["results"]
+	if !ok {
+		return raw
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(rawList, &list); err != nil {
+		return raw
+	}
+	kept := make([]json.RawMessage, 0, len(list))
+	dropped := make([]json.RawMessage, 0)
+	for _, entry := range list {
+		if trialRelevant(entry, tokens) {
+			kept = append(kept, entry)
+		} else {
+			dropped = append(dropped, entry)
+		}
+	}
+	if len(dropped) == 0 {
+		return raw
+	}
+	keptJSON, err := json.Marshal(kept)
+	if err != nil {
+		return raw
+	}
+	droppedJSON, err := json.Marshal(dropped)
+	if err != nil {
+		return raw
+	}
+	countJSON, err := json.Marshal(len(dropped))
+	if err != nil {
+		return raw
+	}
+	obj["results"] = keptJSON
+	obj["filtered_out"] = droppedJSON
+	obj["filtered_count"] = countJSON
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // buildChildEnv returns the environment for the child CLI process: the
