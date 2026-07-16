@@ -1,12 +1,23 @@
 // Command clinical-trials-web is a thin standalone HTTP wrapper around the
 // clinical-trials CLI. It exposes ONE endpoint per command group (6 total) and
 // routes to the ~30 CLI subcommands, assembling each command's real positional
-// arguments (verified from `--help`, NOT the guessed flag names). A per-request
-// BYOK key is injected only into the child process environment.
+// arguments (verified from `--help`, NOT the guessed flag names). The CLI is
+// always keyless/heuristic — it never calls an LLM. When the caller supplied a
+// BYOK (bring-your-own-key) key, this server makes ONE in-process
+// chat-completions call (providers.go) to synthesize the CLI's JSON into a
+// plain-language summary. Each caller uses their own LLM key; the server never
+// holds a key of its own.
 //
-// SECURITY: the X-LLM-Key header lives only in memory for one request/child;
-// buildChildEnv strips every known provider key from the inherited environment
-// before adding the single per-request key; nothing is logged or persisted.
+// SECURITY MODEL (enforced below and in providers.go, do not weaken):
+//   - The BYOK key arrives in the X-LLM-Key request header and lives in memory
+//     only for the duration of one request and one outbound HTTPS call.
+//   - The key is NEVER logged, printed, persisted, written to the server's own
+//     process environment, or passed to the child CLI. buildChildEnv() strips
+//     every known provider key out of os.Environ(), so a key set in the
+//     server's own environment can never leak into the child either.
+//   - Any CLI stderr or LLM provider diagnostic surfaced to the client passes
+//     through redact()/sanitizeLLMError(), which remove the key substring so a
+//     key echoed in an error can never escape.
 package main
 
 import (
@@ -36,14 +47,16 @@ func cliBinaryPath() string {
 	return filepath.Join("bin", name)
 }
 
-// providerEnvVar maps a BYOK provider to the env var the CLI would read. Setting
-// exactly one (and stripping the rest) keeps the caller's choice deterministic.
-var providerEnvVar = map[string]string{
-	"anthropic": "ANTHROPIC_API_KEY",
-	"openai":    "OPENAI_API_KEY",
-	"gemini":    "GEMINI_API_KEY",
-	"groq":      "GROQ_API_KEY",
-	"mistral":   "MISTRAL_API_KEY",
+// allProviderEnvVars is every provider key env var a CLI might conceivably
+// read. buildChildEnv strips ALL of them from the inherited environment so the
+// child never sees any provider key — the child is always keyless; LLM calls
+// happen in-process (providers.go).
+var allProviderEnvVars = []string{
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"GEMINI_API_KEY",
+	"GROQ_API_KEY",
+	"MISTRAL_API_KEY",
 }
 
 // request carries every field any group body might send. Each command's spec
@@ -51,6 +64,7 @@ var providerEnvVar = map[string]string{
 type request struct {
 	Command   string `json:"command"`
 	Provider  string `json:"provider"`
+	Model     string `json:"model"`
 	Query     string `json:"query"`
 	Nctid     string `json:"nctid"`
 	Condition string `json:"condition"`
@@ -215,7 +229,37 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// setCORS adds the CORS headers every /api response needs. Browsers refuse
+// fetch() responses without these ("Failed to fetch") even same-origin in some
+// embed/proxy setups, and error responses need them too or the browser hides
+// the JSON error body.
+func setCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-LLM-Key, X-LLM-Provider")
+}
+
+// preflight handles the CORS preflight OPTIONS request. Returns true when the
+// request was a preflight and has been fully answered.
+func preflight(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodOptions {
+		return false
+	}
+	w.WriteHeader(http.StatusOK)
+	return true
+}
+
+// noLLMGroups / noLLMCmds mark where the LLM synthesis is skipped even with a
+// key: data-management (sync/import/export/export-fhir) moves data around and
+// tail polls a stream — a summary adds nothing over the raw output there.
+var noLLMGroups = map[string]bool{"data-management": true}
+var noLLMCmds = map[string]bool{"tail": true}
+
 func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
+	setCORS(w)
+	if preflight(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "use POST")
 		return
@@ -255,47 +299,72 @@ func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
 		args = append(args, "--format", strings.TrimSpace(req.Format))
 	}
 
-	b, ok := extractBYOK(w, r, req.Provider)
+	b, ok := extractBYOK(w, r, req.Provider, req.Model)
 	if !ok {
 		return
 	}
-	runCLI(w, r, b, group, cmd, args)
+	runCLI(w, r, b, group, cmd, pos, args)
 }
 
 // ---- BYOK + exec (shared) ---------------------------------------------------
 
+// byok holds the per-request BYOK decision: the validated provider name, the
+// key, and the (validated, possibly empty) model override. A zero byok means
+// keyless — the CLI's heuristic output is returned as-is.
 type byok struct {
-	envKeyVar string
-	key       string
-	source    string
+	provider string
+	key      string
+	model    string
 }
 
-func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider string) (byok, bool) {
+// extractBYOK reads the X-LLM-Key header, resolves the provider (from the
+// bodyProvider argument, falling back to the X-LLM-Provider header), and
+// validates the optional model override. It returns the byok decision and true
+// on success; on a client error it writes the response and returns false so
+// the caller stops. When no key is supplied it succeeds with a keyless
+// decision. The key is used ONLY by the in-process LLM call (providers.go) —
+// it never reaches the child CLI in any form.
+func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider, bodyModel string) (byok, bool) {
+	// The model override is validated even on keyless requests so a malformed
+	// value fails the same way regardless of key presence. Its value is never
+	// echoed back or logged.
+	model, errMsg := validateModel(bodyModel)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return byok{}, false
+	}
+	// Key from header only (never from body — a key in a JSON body is easier to
+	// accidentally log).
 	key := strings.TrimSpace(r.Header.Get("X-LLM-Key"))
 	if key == "" {
-		return byok{source: "keyless"}, true
+		return byok{}, true
 	}
 	provider := strings.ToLower(firstNonEmpty(bodyProvider, r.Header.Get("X-LLM-Provider")))
 	if provider == "" {
 		writeError(w, http.StatusBadRequest, "X-LLM-Key supplied but no provider; set \"provider\" in body or X-LLM-Provider header")
 		return byok{}, false
 	}
-	v, ok := providerEnvVar[provider]
-	if !ok {
-		writeError(w, http.StatusBadRequest, "unknown provider; supported: anthropic, openai, gemini, groq, mistral")
+	if _, ok := providers[provider]; !ok {
+		writeError(w, http.StatusBadRequest, "unknown provider "+quoteToken(provider)+"; supported: "+supportedProviders)
 		return byok{}, false
 	}
-	return byok{envKeyVar: v, key: key, source: "llm:" + provider}, true
+	return byok{provider: provider, key: key, model: model}, true
 }
 
-func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, args []string) {
+// runCLI executes the CLI (always keyless), then — when a BYOK key was
+// supplied and the command benefits from it — performs the in-process LLM
+// synthesis over the CLI's JSON output plus the user's free-text inputs and
+// merges it into the response. The CLI result is always returned verbatim; an
+// LLM failure never fails the request — the response degrades to
+// llm_source:"keyless" plus a redacted llm_error.
+func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
 	// #nosec G204 -- args are a fixed subcommand plus user text as discrete argv
-	// elements (no shell); the key goes only into the child's environment.
+	// elements (no shell); the child env carries no keys at all.
 	c := exec.CommandContext(ctx, cliBinaryPath(), args...)
-	c.Env = buildChildEnv(b.envKeyVar, b.key)
+	c.Env = buildChildEnv()
 
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
@@ -320,36 +389,62 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, a
 		result, _ = json.Marshal(map[string]string{"output": string(raw)})
 	}
 
+	resp := map[string]any{
+		"group":      group,
+		"command":    cmd,
+		"llm_source": "keyless",
+		"result":     result,
+	}
+	if b.key != "" && !noLLMGroups[group] && !noLLMCmds[cmd] {
+		syn, err := llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, result)
+		if err != nil {
+			// Already sanitized/redacted by providers.go; safe for client + log-free.
+			resp["llm_error"] = err.Error()
+		} else {
+			resp["llm_synthesis"] = syn
+			resp["llm_source"] = "llm:" + b.provider
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"group":   group,
-		"command": cmd,
-		"source":  b.source,
-		"result":  result,
-	})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func buildChildEnv(keyVar, keyVal string) []string {
-	strip := map[string]struct{}{}
-	for _, v := range providerEnvVar {
+// buildChildEnv returns the environment for the child CLI process: the
+// server's own environment with EVERY provider key removed. The child is
+// always keyless — BYOK keys are used only for the in-process LLM call and
+// must never reach a subprocess.
+func buildChildEnv() []string {
+	strip := make(map[string]struct{}, len(allProviderEnvVars))
+	for _, v := range allProviderEnvVars {
 		strip[v] = struct{}{}
 	}
 	base := os.Environ()
-	out := make([]string, 0, len(base)+1)
+	out := make([]string, 0, len(base))
 	for _, kv := range base {
 		name := kv
 		if i := strings.IndexByte(kv, '='); i >= 0 {
 			name = kv[:i]
 		}
 		if _, drop := strip[name]; drop {
-			continue
+			continue // never inherit the server's own provider keys
 		}
 		out = append(out, kv)
 	}
-	if keyVar != "" && keyVal != "" {
-		out = append(out, keyVar+"="+keyVal)
-	}
 	return out
+}
+
+// quoteToken quotes a short untrusted token for safe inclusion in an error
+// message, stripping control bytes so it can't echo terminal escapes.
+func quoteToken(s string) string {
+	if len(s) > 40 {
+		s = s[:40]
+	}
+	return "\"" + strings.Map(func(r rune) rune {
+		if r < 0x20 {
+			return '?'
+		}
+		return r
+	}, s) + "\""
 }
 
 func redact(s, key string) string {

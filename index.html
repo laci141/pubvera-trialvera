@@ -10,6 +10,15 @@
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
     background:linear-gradient(135deg,#0f0f0f 0%,#1a1a2e 100%);color:#e0e0e0;line-height:1.6;min-height:100vh}
+  /* Colorful fixed backdrop so backdrop-filter blur on the glass panels has
+     something visible to blur (a flat dark background makes blur a no-op). */
+  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(circle at 15% 20%,rgba(0,212,255,.22),transparent 45%),
+      radial-gradient(circle at 85% 25%,rgba(124,58,237,.24),transparent 50%),
+      radial-gradient(circle at 30% 85%,rgba(47,214,166,.16),transparent 50%),
+      radial-gradient(circle at 75% 75%,rgba(255,171,76,.12),transparent 45%),
+      linear-gradient(135deg,#0f0f0f 0%,#1a1a2e 100%)}
 
   .hero{min-height:70vh;display:flex;flex-direction:column;justify-content:center;align-items:center;
     padding:2rem;text-align:center;background:linear-gradient(180deg,rgba(15,15,15,1),rgba(26,26,46,.8))}
@@ -17,7 +26,7 @@
     background:linear-gradient(90deg,#00d4ff,#7c3aed);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .hero p{font-size:1.15rem;color:#999;margin-bottom:2rem;max-width:60ch}
   .search-box{width:100%;max-width:760px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
-    border-radius:1rem;padding:1.2rem;backdrop-filter:blur(10px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
+    border-radius:1rem;padding:1.2rem;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
   .search-box input{width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;
     padding:1rem;color:#e0e0e0;font-size:1rem;outline:none;transition:.3s}
   .search-box input:focus{border-color:rgba(0,212,255,.5);box-shadow:inset 0 0 1rem rgba(0,212,255,.1)}
@@ -29,14 +38,14 @@
 
   .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:1.4rem;padding:3rem 2rem;max-width:1200px;margin:0 auto}
   .card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:1rem;padding:1.8rem;
-    cursor:pointer;transition:.3s;backdrop-filter:blur(10px);min-height:150px;display:flex;flex-direction:column;
+    cursor:pointer;transition:.3s;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);min-height:150px;display:flex;flex-direction:column;
     justify-content:center;align-items:center;text-align:center;border-left:4px solid var(--c)}
   .card:hover{transform:translateY(-8px);border-color:rgba(255,255,255,.3);box-shadow:0 16px 48px rgba(0,0,0,.4)}
   .card .ic{font-size:2.6rem;margin-bottom:.7rem}
   .card .lb{font-size:1.15rem;font-weight:600;color:var(--c)}
   .card .sub{font-size:.78rem;color:#888;margin-top:.35rem}
 
-  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(5px);
+  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px);
     justify-content:center;align-items:center;z-index:1000;animation:fade .3s ease;padding:1rem}
   .modal.active{display:flex}
   @keyframes fade{from{opacity:0}to{opacity:1}}
@@ -83,9 +92,34 @@
   @keyframes spin{to{transform:rotate(360deg)}}
   .err{color:#ffb3b3}
 
+  /* AI synthesis panel (glass card at the top of the results) */
+  .ai-panel{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-left:4px solid #00d4ff;
+    border-radius:.9rem;padding:1.2rem 1.4rem;margin-bottom:1rem;
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
+  .ai-panel h3{color:#00d4ff;font-size:1.05rem;margin-bottom:.5rem}
+  .ai-panel h3 .meta{font-weight:400;color:#888;font-size:.78rem}
+  .ai-panel p.sum{color:#e0e0e0;margin-bottom:.6rem}
+  .ai-panel h4{font-size:.85rem;color:#9aa4bf;margin:.7rem 0 .3rem;text-transform:uppercase;letter-spacing:.04em}
+  .ai-panel ul{list-style:none;padding:0}
+  .ai-panel ul li{padding:.4rem .7rem;border:1px solid rgba(255,255,255,.08);border-radius:.5rem;
+    background:rgba(0,0,0,.2);margin-bottom:.4rem;font-size:.9rem}
+  .ai-panel ul.caveats li{border-color:rgba(251,191,36,.25);color:#e8d9b0}
+  .ai-disclaimer{font-size:.8rem;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
+    border-radius:.5rem;padding:.5rem .8rem;margin-top:.8rem}
+  .llm-error-note{font-size:.85rem;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
+    border-radius:.5rem;padding:.6rem .9rem;margin-bottom:1rem}
+  .model-hint{font-size:.75rem;color:#888;margin-top:.3rem}
+
   footer{text-align:center;padding:2rem;color:#666;border-top:1px solid rgba(255,255,255,.05);font-size:.85rem}
   footer a{color:#00d4ff;text-decoration:none}footer a:hover{text-decoration:underline}
-  @media(max-width:768px){.bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:3rem}}
+  @media(max-width:768px){
+    .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:3rem}
+    /* mobile: lighter blur + tighter padding on the glass panels */
+    .search-box{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem}
+    .card{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:1.2rem}
+    .ai-panel{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem 1rem}
+    .modal-content{padding:1.1rem}
+  }
 </style>
 </head>
 <body>
@@ -98,11 +132,27 @@
     <div class="keyrow">
       <input id="llmKey" type="password" placeholder="LLM API key (optional, BYOK)" autocomplete="off">
       <select id="llmProvider">
-        <option value="anthropic">Anthropic</option><option value="openai">OpenAI</option>
-        <option value="gemini">Gemini</option><option value="groq">Groq</option><option value="mistral">Mistral</option>
+        <optgroup label="⭐ Recommended">
+          <option value="deepseek">DeepSeek — fast + cheap</option>
+          <option value="zai">GLM (Z.ai)</option>
+          <option value="openrouter">OpenRouter — any/free models</option>
+        </optgroup>
+        <optgroup label="More providers">
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="groq">Groq</option>
+          <option value="mistral">Mistral</option>
+          <option value="moonshot">Moonshot Kimi</option>
+          <option value="qwen">Qwen (DashScope)</option>
+          <option value="minimax">MiniMax</option>
+          <option value="xai">xAI Grok</option>
+        </optgroup>
       </select>
+      <input id="llmModel" type="text" placeholder="Model (optional)" autocomplete="off">
     </div>
-    <div class="keyhint">Your key is stored only in this browser (localStorage) and sent per-request via the <code>X-LLM-Key</code> header. Never logged or persisted server-side.</div>
+    <div class="model-hint" id="modelHint"></div>
+    <div class="keyhint">Your key is stored only in this browser (localStorage) and sent per-request via the <code>X-LLM-Key</code> header. Never logged or persisted server-side. With a key, an AI synthesis panel (summary · key points · caveats) is added on top of every result — informational only, not medical advice.</div>
   </div>
 </section>
 
@@ -148,17 +198,17 @@ const GROUPS = {
     sponsors:{label:"Top sponsors",fields:[T("area","Disease area","oncology"),LIM(10)]},
     velocity:{label:"Research velocity",fields:[T("area","Disease area","oncology")]},
   }},
+  // tail (endless polling) and data-management sync/import (local SQLite
+  // writes) are hidden here: pointless on an ephemeral-disk web deploy. The
+  // server still routes them for local/admin use.
   "recruiting-watch":{icon:"📋",title:"Recruiting & Watch",color:"#ffab4c",cmds:{
     recruiting:{label:"Recruiting trials",fields:[T("condition","Condition","heart disease"),LIM(10)]},
     watch:{label:"Watch a term",fields:[T("term","Term","glp-1")]},
-    tail:{label:"Tail live changes",fields:[T("resource","Resource (optional)","")]},
   }},
   "data-management":{icon:"💾",title:"Data Management",color:"#fbbf24",cmds:{
-    sync:{label:"Sync to local DB",fields:[T("query","Term (optional)","covid")]},
     export:{label:"Export data",fields:[T("resource","Resource","trials"),LIM(50)]},
     "export-fhir":{label:"Export FHIR",fields:[T("nctid","NCT ID","NCT07104383"),
       {k:"format",label:"Format",type:"select",opts:["fhir","csv"]}]},
-    import:{label:"Import data",fields:[T("resource","Resource","trials")]},
   }},
   "system":{icon:"⚙️",title:"System & Info",color:"#9aa4bf",cmds:{
     health:{label:"Source health",fields:[]},
@@ -176,11 +226,31 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const isNum=n=>typeof n==="number"&&!isNaN(n);
 
+// Default model per provider (mirrors the server's registry) — shown as a
+// placeholder/hint; openrouter routes to any hosted model, so a model there
+// is effectively required.
+const DEFAULT_MODELS={anthropic:"claude-haiku-4-5",openai:"gpt-5-mini",gemini:"gemini-2.5-flash",
+  groq:"llama-3.3-70b-versatile",mistral:"mistral-small-latest",deepseek:"deepseek-chat",zai:"glm-5",
+  moonshot:"kimi-k2.6",qwen:"qwen3-max",minimax:"MiniMax-M2.7",xai:"grok-4-fast",openrouter:""};
+function updateModelHint(){
+  const p=$("#llmProvider").value, hint=$("#modelHint"), model=$("#llmModel");
+  if(p==="openrouter"){
+    hint.textContent="OpenRouter needs a model ID — e.g. deepseek/deepseek-chat or any :free model";
+    model.placeholder="Model (required for OpenRouter)";
+  }else{
+    hint.textContent="";
+    model.placeholder="Model (optional · default: "+(DEFAULT_MODELS[p]||"provider default")+")";
+  }
+}
+
 // ---- localStorage BYOK ----
 (function load(){const k=localStorage.getItem("ct_key");if(k)$("#llmKey").value=k;
-  const p=localStorage.getItem("ct_provider");if(p)$("#llmProvider").value=p;})();
+  const p=localStorage.getItem("ct_provider");if(p)$("#llmProvider").value=p;
+  const m=localStorage.getItem("ct_model");if(m)$("#llmModel").value=m;
+  updateModelHint();})();
 $("#llmKey").addEventListener("input",e=>localStorage.setItem("ct_key",e.target.value));
-$("#llmProvider").addEventListener("change",e=>localStorage.setItem("ct_provider",e.target.value));
+$("#llmProvider").addEventListener("change",e=>{localStorage.setItem("ct_provider",e.target.value);updateModelHint();});
+$("#llmModel").addEventListener("input",e=>localStorage.setItem("ct_model",e.target.value));
 
 // ---- build bento ----
 const bento=$("#bento");
@@ -241,7 +311,11 @@ async function run(g,cmd){
     else if(el.value.trim()) body[f.k]=el.value.trim();
   }
   const key=$("#llmKey").value.trim();
-  if(key) body.provider=$("#llmProvider").value;
+  if(key){
+    body.provider=$("#llmProvider").value;
+    const model=$("#llmModel").value.trim();
+    if(model) body.model=model;
+  }
   const res=$("#res");
   res.innerHTML=`<div class="rcard"><span class="spin"></span> Running <b>${esc(cmd)}</b>…</div>`;
   const headers={"Content-Type":"application/json"};
@@ -260,8 +334,28 @@ function renderResult(g,cmd,payload){
   let head=`<div class="rcard" style="padding:.7rem 1rem"><div class="chips">
      <span class="chip">group <b>${esc(payload.group||g)}</b></span>
      <span class="chip">command <b>${esc(payload.command||cmd)}</b></span>
-     <span class="chip">source <b>${esc(payload.source||"keyless")}</b></span></div></div>`;
-  return head + renderBody(r);
+     <span class="chip">source <b>${esc(payload.llm_source||payload.source||"keyless")}</b></span></div></div>`;
+  return head + renderSynthesis(payload) + renderBody(r);
+}
+
+// AI synthesis panel: rendered at the TOP of the results when the in-process
+// LLM call succeeded; a soft warning when it failed (the CLI result below is
+// still valid either way).
+function renderSynthesis(payload){
+  let html="";
+  if(payload.llm_error)
+    html+=`<div class="llm-error-note">⚠️ AI synthesis unavailable — showing tool output only. (${esc(payload.llm_error)})</div>`;
+  const s=payload.llm_synthesis;
+  if(!s) return html;
+  const li=a=>Array.isArray(a)&&a.length?"<ul>"+a.map(x=>`<li>${esc(x)}</li>`).join("")+"</ul>":"";
+  html+=`<div class="ai-panel">
+    <h3>🤖 AI Synthesis <span class="meta">${esc(payload.llm_source||"")}${s.model?" · "+esc(s.model):""}</span></h3>
+    <p class="sum">${esc(s.summary)}</p>
+    ${li(s.key_points)?`<h4>Key points</h4>${li(s.key_points)}`:""}
+    ${Array.isArray(s.caveats)&&s.caveats.length?`<h4>Caveats</h4><ul class="caveats">${s.caveats.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
+    <div class="ai-disclaimer">⚕️ ${esc(s.not_advice||"Informational only — not medical advice.")}</div>
+  </div>`;
+  return html;
 }
 
 function renderBody(r){
