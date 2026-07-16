@@ -75,6 +75,9 @@
 
   .results{margin-top:.5rem;animation:fade .3s ease}
   .rcard{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:.75rem;padding:1.2rem;margin-bottom:1rem}
+  /* compare's side-by-side drug cards: stronger base so the text stays
+     readable over the brighter glass gradient; other .rcard uses untouched */
+  .rcard.compare-side{background:rgba(255,255,255,.12)}
   .rcard h3{color:var(--c);margin-bottom:.5rem;font-size:1.05rem}
   .chips{display:flex;flex-wrap:wrap;gap:.5rem;margin:.4rem 0}
   .chip{font-size:.8rem;padding:.35rem .7rem;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.25)}
@@ -442,7 +445,7 @@ function filteredNote(r){
     <details class="filtered-section"><summary>Show hidden trials (${n})</summary><ul class="li">${items}</ul></details>`;
 }
 
-function sideCard(x){return `<div class="rcard"><h3>${esc(x.name||x.drug||"—")}</h3>${scalarChips(x)}</div>`;}
+function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x.drug||"—")}</h3>${scalarChips(x)}</div>`;}
 function factorList(f){if(!Array.isArray(f)||!f.length)return"";
   return `<ul class="li" style="margin-top:.6rem">`+f.map(x=>`<li>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
 function scalarChips(o){const c=Object.entries(o).filter(([k,v])=>v!=null&&typeof v!=="object")
