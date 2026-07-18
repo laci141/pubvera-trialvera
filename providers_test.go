@@ -222,6 +222,47 @@ func TestParseSynthesis(t *testing.T) {
 	}
 }
 
+func TestParseSynthesisStripsFieldNameArtifacts(t *testing.T) {
+	text := `{"summary":"Ten trials found.",` +
+		`"key_points":["not_advice","10 trials are recruiting for diabetes","key_points","Caveats"],` +
+		`"caveats":["caveats","model","Registry-only signal here.","Informational only — not medical advice."],` +
+		`"not_advice":"Informational only — not medical advice."}`
+	syn, err := parseSynthesis(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(syn.KeyPoints) != 1 || syn.KeyPoints[0] != "10 trials are recruiting for diabetes" {
+		t.Errorf("field-name artifacts must be stripped from key_points, got %v", syn.KeyPoints)
+	}
+	// "caveats"/"model" are field names, and the last caveat repeats the
+	// not_advice line — only the real sentence survives.
+	if len(syn.Caveats) != 1 || syn.Caveats[0] != "Registry-only signal here." {
+		t.Errorf("artifacts/duplicate-of-not_advice must be stripped from caveats, got %v", syn.Caveats)
+	}
+}
+
+func TestParseSynthesisDropsSingleTokenItems(t *testing.T) {
+	text := `{"summary":"s.","key_points":["registry-only","Small sample sizes overall."],"caveats":[],"not_advice":"x"}`
+	syn, err := parseSynthesis(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(syn.KeyPoints) != 1 || syn.KeyPoints[0] != "Small sample sizes overall." {
+		t.Errorf("spaceless single-token items must be dropped, got %v", syn.KeyPoints)
+	}
+}
+
+func TestParseSynthesisDedupsRepeatedSentences(t *testing.T) {
+	text := `{"summary":"s.","key_points":[],"caveats":["Small sample sizes.","small sample sizes","Registry data only."],"not_advice":"x"}`
+	syn, err := parseSynthesis(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(syn.Caveats) != 2 || syn.Caveats[0] != "Small sample sizes." || syn.Caveats[1] != "Registry data only." {
+		t.Errorf("case/punctuation-equal duplicates must appear once, got %v", syn.Caveats)
+	}
+}
+
 // ---- synthesis post-validation (anti-hallucination) --------------------------
 
 // groundingSource mimics the live recruiting output that produced the "Við

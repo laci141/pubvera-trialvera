@@ -617,7 +617,52 @@ func parseSynthesis(text string) (*llmSynthesis, error) {
 	if syn.NotAdvice == "" {
 		syn.NotAdvice = defaultNotAdvice
 	}
+	// Some models echo the schema back: field names ("not_advice") or the
+	// not-advice sentence land as list items. Strip those artifacts.
+	syn.KeyPoints = stripFieldArtifacts(syn.KeyPoints, syn.NotAdvice)
+	syn.Caveats = stripFieldArtifacts(syn.Caveats, syn.NotAdvice)
 	return &syn, nil
+}
+
+// synthesisFieldNames are the response-schema keys a confused model sometimes
+// emits as list CONTENT; any list item exactly matching one is an artifact.
+var synthesisFieldNames = map[string]bool{
+	"summary": true, "key_points": true, "caveats": true,
+	"not_advice": true, "model": true, "grounding_note": true,
+}
+
+// normalizeSentence canonicalizes a sentence for duplicate comparison:
+// lowercase, whitespace collapsed, trailing punctuation stripped.
+func normalizeSentence(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.Trim(s, ".!?—-– ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// stripFieldArtifacts removes schema echoes and duplicates from a synthesis
+// list: items that exactly match a known field name, single-token items with
+// no space (field-name-like fragments, never a real sentence), items that
+// essentially repeat the not_advice line, and repeated sentences within the
+// same list.
+func stripFieldArtifacts(items []string, notAdvice string) []string {
+	seen := map[string]bool{normalizeSentence(notAdvice): true}
+	out := items[:0]
+	for _, s := range items {
+		trimmed := strings.TrimSpace(s)
+		if synthesisFieldNames[strings.ToLower(trimmed)] {
+			continue
+		}
+		if !strings.ContainsAny(trimmed, " \t") {
+			continue
+		}
+		n := normalizeSentence(trimmed)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // cleanStringList trims entries, drops blanks, and caps the list length so a
