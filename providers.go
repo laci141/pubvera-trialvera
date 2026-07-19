@@ -302,6 +302,14 @@ type factTrial struct {
 	SponsorClass string `json:"sponsor_class"`
 }
 
+// factDrugSide is the slice of compare's drug_a/drug_b side the fact sheet
+// derives from. sample_size is the number of trials the CLI pulled for the
+// query — NOT a participant count; observed live, the model read "sample
+// size 300" as 300 participants, so the emitted label spells that out.
+type factDrugSide struct {
+	SampleSize *int `json:"sample_size"`
+}
+
 // rankedLine formats {label,count} entries as "Not specified 5, N/A 4, Phase 4 1".
 func rankedLine(entries []rankedEntry) string {
 	parts := make([]string, 0, len(entries))
@@ -336,10 +344,13 @@ func buildFactSheet(result any) string {
 	var obj struct {
 		Returned          *int          `json:"returned"`
 		TotalMatching     *int          `json:"total_matching"`
+		SampleSize        *int          `json:"sample_size"`
 		PhaseDistribution []rankedEntry `json:"phase_distribution"`
 		TopCountries      []rankedEntry `json:"top_countries"`
 		Trials            []factTrial   `json:"trials"`
 		Results           []factTrial   `json:"results"`
+		DrugA             *factDrugSide `json:"drug_a"`
+		DrugB             *factDrugSide `json:"drug_b"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return ""
@@ -355,6 +366,17 @@ func buildFactSheet(result any) string {
 	}
 	if obj.TotalMatching != nil {
 		lines = append(lines, fmt.Sprintf("- total matching: %d", *obj.TotalMatching))
+	}
+	// sample_size counts trials pulled for the query, never participants —
+	// the label must say so or the model states it as an enrollment figure.
+	if obj.SampleSize != nil {
+		lines = append(lines, fmt.Sprintf("- trials sampled for this analysis (not participant count): %d", *obj.SampleSize))
+	}
+	if obj.DrugA != nil && obj.DrugA.SampleSize != nil {
+		lines = append(lines, fmt.Sprintf("- drug A trials sampled for this analysis (not participant count): %d", *obj.DrugA.SampleSize))
+	}
+	if obj.DrugB != nil && obj.DrugB.SampleSize != nil {
+		lines = append(lines, fmt.Sprintf("- drug B trials sampled for this analysis (not participant count): %d", *obj.DrugB.SampleSize))
 	}
 	if len(rows) > 0 {
 		withRes, counted := 0, 0

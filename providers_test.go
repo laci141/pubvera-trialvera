@@ -439,6 +439,30 @@ func TestBuildFactSheetOmitsEmptyFields(t *testing.T) {
 	}
 }
 
+func TestBuildFactSheetSampleSizeIsTrialsNotParticipants(t *testing.T) {
+	// compare: sample_size is the number of trials pulled per drug, not an
+	// enrollment figure — without the clarifier the model states it as
+	// "300 participants" (observed live).
+	raw := []byte(`{"drug_a":{"query":"metformin","sample_size":300},"drug_b":{"query":"insulin","sample_size":300}}`)
+	sheet := buildFactSheet(raw)
+	for _, want := range []string{
+		"- drug A trials sampled for this analysis (not participant count): 300",
+		"- drug B trials sampled for this analysis (not participant count): 300",
+	} {
+		if !strings.Contains(sheet, want) {
+			t.Errorf("fact sheet missing %q:\n%s", want, sheet)
+		}
+	}
+	// Top-level sample_size carries the same clarifier.
+	if got := buildFactSheet([]byte(`{"sample_size":25}`)); !strings.Contains(got, "- trials sampled for this analysis (not participant count): 25") {
+		t.Errorf("top-level sample_size line missing:\n%s", got)
+	}
+	// No sample_size anywhere -> no sampled line.
+	if got := buildFactSheet([]byte(`{"returned":2}`)); strings.Contains(got, "sampled") {
+		t.Errorf("absent sample_size must omit its line, got %q", got)
+	}
+}
+
 func TestSanitizeLLMErrorRedactsKey(t *testing.T) {
 	key := "sk-super-secret-key-123"
 	out := sanitizeLLMError("provider said: invalid key "+key+"\nline2\x07", key)
