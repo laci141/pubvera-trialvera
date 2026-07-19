@@ -359,6 +359,86 @@ func TestCompactStripsNoiseFieldsFromTrials(t *testing.T) {
 	}
 }
 
+// ---- pre-computed fact sheet -------------------------------------------------
+
+// factSheetFixture mirrors the live recruiting output: 10 trials, none with
+// results, one INDUSTRY sponsor among OTHERs, enrollments 10..100.
+func factSheetFixture(t *testing.T) []byte {
+	t.Helper()
+	trials := make([]map[string]any, 0, 10)
+	for i := 0; i < 10; i++ {
+		tr := map[string]any{
+			"id":            fmt.Sprintf("NCT%08d", i),
+			"has_results":   false,
+			"sponsor_class": "OTHER",
+			"enrollment":    10 * (i + 1),
+		}
+		if i == 0 {
+			tr["sponsor_class"] = "INDUSTRY"
+		}
+		trials = append(trials, tr)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"returned":       10,
+		"total_matching": 4004,
+		"phase_distribution": []map[string]any{
+			{"label": "Not specified", "count": 5},
+			{"label": "N/A", "count": 4},
+			{"label": "Phase 4", "count": 1},
+		},
+		"trials": trials,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestBuildFactSheetIncludesAggregates(t *testing.T) {
+	sheet := buildFactSheet(factSheetFixture(t))
+	for _, want := range []string{
+		"PRE-COMPUTED FACTS",
+		"- trials returned: 10",
+		"- total matching: 4004",
+		"- trials with results reported: 0 of 10",
+		"- trials without results: 10 of 10",
+		"- phase distribution: Not specified 5, N/A 4, Phase 4 1",
+		"- enrollment range: 10 to 100",
+		"- sponsor classes: OTHER 9, INDUSTRY 1",
+	} {
+		if !strings.Contains(sheet, want) {
+			t.Errorf("fact sheet missing %q:\n%s", want, sheet)
+		}
+	}
+}
+
+func TestBuildFactSheetOmitsEmptyFields(t *testing.T) {
+	// No phase_distribution / top_countries / enrollment / sponsor_class:
+	// those lines must be absent entirely — never a "0" or "unknown" filler.
+	raw := []byte(`{"returned":2,"trials":[{"id":"NCT00000001","has_results":true},{"id":"NCT00000002","has_results":false}]}`)
+	sheet := buildFactSheet(raw)
+	for _, absent := range []string{"phase distribution", "top countries", "enrollment range", "sponsor classes", "total matching"} {
+		if strings.Contains(sheet, absent) {
+			t.Errorf("empty field must omit its line, found %q in:\n%s", absent, sheet)
+		}
+	}
+	if !strings.Contains(sheet, "- trials with results reported: 1 of 2") {
+		t.Errorf("present fields must still be stated:\n%s", sheet)
+	}
+	// Nothing derivable at all -> no sheet, no header.
+	for _, empty := range [][]byte{[]byte(`not json`), []byte(`{"note":"x"}`), []byte(`[1,2]`)} {
+		if got := buildFactSheet(empty); got != "" {
+			t.Errorf("input %q must yield an empty sheet, got %q", empty, got)
+		}
+	}
+	// Rows without has_results must not produce a results-reported line built
+	// on a partial count.
+	partial := []byte(`{"trials":[{"id":"NCT00000001"},{"id":"NCT00000002","has_results":true}]}`)
+	if got := buildFactSheet(partial); strings.Contains(got, "results reported") {
+		t.Errorf("partial has_results coverage must omit the results lines, got %q", got)
+	}
+}
+
 func TestSanitizeLLMErrorRedactsKey(t *testing.T) {
 	key := "sk-super-secret-key-123"
 	out := sanitizeLLMError("provider said: invalid key "+key+"\nline2\x07", key)

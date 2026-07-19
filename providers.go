@@ -248,9 +248,12 @@ func stripTrialEntry(entry json.RawMessage) (json.RawMessage, bool) {
 // synthesisPrompt builds the single user message sent to the LLM. It is
 // generic across every clinical-trials command shape and hard-codes the
 // informational-only framing: the model must never tell a user what treatment
-// to take. The CLI JSON is compacted first (compactForLLM), then byte-capped
-// with an explicit truncation note so a mid-JSON cut is never silent.
+// to take. The fact sheet is derived from the FULL result before compaction
+// (its numbers must be authoritative), then the CLI JSON is compacted
+// (compactForLLM) and byte-capped with an explicit truncation note so a
+// mid-JSON cut is never silent.
 func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
+	facts := buildFactSheet(cliJSON)
 	cliJSON = compactForLLM(cliJSON)
 	truncated := false
 	if len(cliJSON) > maxCLIJSONForPrompt {
@@ -261,6 +264,9 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 	b.WriteString("You are a clinical-trials data analyst. Below is the JSON output of a clinical-trials intelligence tool (command: " + command + ") for the user's input(s):\n")
 	for i, in := range inputs {
 		fmt.Fprintf(&b, "INPUT %d: %s\n", i+1, in)
+	}
+	if facts != "" {
+		b.WriteString("\n" + facts + "\n")
 	}
 	b.WriteString("\nTOOL OUTPUT (may be truncated):\n")
 	b.Write(cliJSON)
@@ -274,11 +280,155 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 		"2. Back every trial-level claim with its NCT ID in the same sentence, exactly as it appears in the tool output.\n" +
 		"3. NEVER mention a country, sponsor, enrollment figure, or trial that does not appear verbatim in the tool output. Copy names and numbers character-for-character; do not paraphrase identifiers.\n" +
 		"4. Do not rank or generalize (\"X leads\", \"most trials are…\") unless the counts in the tool output directly show it.\n" +
-		"5. If the output is empty or too thin to summarize, say exactly that in the summary and caveats — never fill gaps with plausible-sounding facts.\n" +
-		"Your response is post-validated by software: statements referencing NCT IDs, countries, or numbers absent from the tool output are removed.\n\n" +
+		"5. If the output is empty or too thin to summarize, say exactly that in the summary and caveats — never fill gaps with plausible-sounding facts.\n")
+	if facts != "" {
+		b.WriteString("6. Any number you state must come from PRE-COMPUTED FACTS above. Do not count items yourself. If a number is not listed there, do not mention that quantity at all — describe it qualitatively instead.\n")
+	}
+	b.WriteString("Your response is post-validated by software: statements referencing NCT IDs, countries, or numbers absent from the tool output are removed.\n\n" +
 		"Respond with ONLY a JSON object, no markdown fences, with exactly these fields:\n" +
 		`{"summary":"2-4 plain-language sentences","key_points":["3-5 points citing concrete numbers/IDs from the tool output"],"caveats":["limitations, e.g. early phase, small N, registry-only signal"],"not_advice":"informational only, not medical advice"}`)
 	return b.String()
+}
+
+// ---- pre-computed fact sheet -------------------------------------------------
+
+// factTrial is the slice of a trial row the fact sheet derives from.
+// HasResults is a pointer so an absent field is distinguishable from false —
+// the with/without-results lines are only emitted when EVERY row carries the
+// field (a partial count would be exactly the miscounting we're preventing).
+type factTrial struct {
+	HasResults   *bool  `json:"has_results"`
+	Enrollment   int    `json:"enrollment"`
+	SponsorClass string `json:"sponsor_class"`
+}
+
+// rankedLine formats {label,count} entries as "Not specified 5, N/A 4, Phase 4 1".
+func rankedLine(entries []rankedEntry) string {
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		parts = append(parts, fmt.Sprintf("%s %d", e.Label, e.Count))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// buildFactSheet derives an authoritative numeric fact block from the CLI
+// result (aggregates plus counts over the trials array) so the model never
+// has to count anything itself — small models demonstrably miscount ("5
+// trials have no results" when all 10 had has_results=false). A missing or
+// empty field omits its line entirely: no "0"/"unknown" placeholders, which
+// would mislead the model. Returns "" when there is nothing to state.
+func buildFactSheet(result any) string {
+	var raw []byte
+	switch v := result.(type) {
+	case []byte:
+		raw = v
+	case json.RawMessage:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		enc, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		raw = enc
+	}
+	var obj struct {
+		Returned          *int          `json:"returned"`
+		TotalMatching     *int          `json:"total_matching"`
+		PhaseDistribution []rankedEntry `json:"phase_distribution"`
+		TopCountries      []rankedEntry `json:"top_countries"`
+		Trials            []factTrial   `json:"trials"`
+		Results           []factTrial   `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	rows := obj.Trials
+	if len(rows) == 0 {
+		rows = obj.Results
+	}
+
+	var lines []string
+	if obj.Returned != nil {
+		lines = append(lines, fmt.Sprintf("- trials returned: %d", *obj.Returned))
+	}
+	if obj.TotalMatching != nil {
+		lines = append(lines, fmt.Sprintf("- total matching: %d", *obj.TotalMatching))
+	}
+	if len(rows) > 0 {
+		withRes, counted := 0, 0
+		for _, r := range rows {
+			if r.HasResults != nil {
+				counted++
+				if *r.HasResults {
+					withRes++
+				}
+			}
+		}
+		if counted == len(rows) {
+			lines = append(lines,
+				fmt.Sprintf("- trials with results reported: %d of %d", withRes, len(rows)),
+				fmt.Sprintf("- trials without results: %d of %d", len(rows)-withRes, len(rows)))
+		}
+	}
+	if len(obj.PhaseDistribution) > 0 {
+		lines = append(lines, "- phase distribution: "+rankedLine(obj.PhaseDistribution))
+	}
+	if len(obj.TopCountries) > 0 {
+		lines = append(lines, "- top countries: "+rankedLine(obj.TopCountries))
+	}
+	minE, maxE, haveE := 0, 0, false
+	for _, r := range rows {
+		if r.Enrollment > 0 {
+			if !haveE {
+				minE, maxE, haveE = r.Enrollment, r.Enrollment, true
+				continue
+			}
+			if r.Enrollment < minE {
+				minE = r.Enrollment
+			}
+			if r.Enrollment > maxE {
+				maxE = r.Enrollment
+			}
+		}
+	}
+	if haveE {
+		lines = append(lines, fmt.Sprintf("- enrollment range: %d to %d", minE, maxE))
+	}
+	classCounts := map[string]int{}
+	for _, r := range rows {
+		if c := strings.TrimSpace(r.SponsorClass); c != "" {
+			classCounts[c]++
+		}
+	}
+	if len(classCounts) > 0 {
+		type classCount struct {
+			label string
+			n     int
+		}
+		classes := make([]classCount, 0, len(classCounts))
+		for l, n := range classCounts {
+			classes = append(classes, classCount{l, n})
+		}
+		sort.Slice(classes, func(i, j int) bool {
+			if classes[i].n != classes[j].n {
+				return classes[i].n > classes[j].n
+			}
+			return classes[i].label < classes[j].label
+		})
+		parts := make([]string, 0, len(classes))
+		for _, c := range classes {
+			parts = append(parts, fmt.Sprintf("%s %d", c.label, c.n))
+		}
+		lines = append(lines, "- sponsor classes: "+strings.Join(parts, ", "))
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	return "PRE-COMPUTED FACTS (authoritative — use these exact numbers, do NOT recount):\n" +
+		strings.Join(lines, "\n")
 }
 
 // openAIRequest / anthropicRequest are the minimal wire shapes. temperature is
@@ -381,7 +531,14 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	// referencing NCT IDs, countries, or numbers absent from the source are
 	// removed or flagged. Observed live failure this guards against: a caveat
 	// citing a nonexistent "Við Norway" trial for a dataset with no Norway.
-	groundSynthesis(syn, cliJSON)
+	// The fact sheet is appended to the validation source so numbers the model
+	// correctly copies from PRE-COMPUTED FACTS (derived counts like "3 of 25"
+	// that never appear literally in the JSON) are not flagged as unverified.
+	groundingSrc := cliJSON
+	if fs := buildFactSheet(cliJSON); fs != "" {
+		groundingSrc = append(append([]byte{}, cliJSON...), []byte("\n"+fs)...)
+	}
+	groundSynthesis(syn, groundingSrc)
 	return syn, nil
 }
 
