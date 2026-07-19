@@ -484,9 +484,12 @@ async function run(g,cmd){
     const r=await fetch(API_BASE+"/api/"+g,{method:"POST",headers,body:JSON.stringify(body)});
     const data=await r.json();
     if(!r.ok){res.innerHTML=`<div class="rcard"><h3 class="err">Error</h3><p>${esc(data.error||("HTTP "+r.status))}</p><button class="backbtn" onclick="document.getElementById('res').innerHTML=''">Clear</button></div>`;return;}
-    lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data};
+    lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,
+      query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
     res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" onclick="document.getElementById('res').innerHTML=''">Clear</button>`;
     initSortIndicators(res);
+    registerView(cmd,domViewProvider(cmd));
+    refreshQCount(res);
   }catch(e){res.innerHTML=`<div class="rcard"><h3 class="err">Error</h3><p>${esc(e.message)}</p></div>`;}
 }
 
@@ -497,7 +500,10 @@ function renderResult(g,cmd,payload){
      <span class="chip">group <b>${esc(payload.group||g)}</b></span>
      <span class="chip">command <b>${esc(payload.command||cmd)}</b></span>
      <span class="chip">source <b>${esc(payload.llm_source||payload.source||"keyless")}</b></span></div></div>`;
-  return head + renderSynthesis(payload) + resultMetaRow(cmd) + renderBody(r);
+  // data-exportkey scopes the live-view lookup: the export provider finds the
+  // rendered rows (and the filter/sort controls) for exactly this command.
+  return head + renderSynthesis(payload) + '<div data-exportkey="'+esc(cmd)+'">' +
+    resultMetaRow(cmd) + renderBody(r,rowsFromLastData(cmd)) + '</div>';
 }
 
 // AI synthesis panel: rendered at the TOP of the results when the in-process
@@ -521,7 +527,10 @@ function renderSynthesis(payload){
   return html;
 }
 
-function renderBody(r){
+// main = the row array exports work from (lastData[cmd].rows); the renderer
+// that draws that exact array tags its rows with data-ri so the live-view
+// provider can map visible DOM rows back to data rows.
+function renderBody(r,main){
   if(r==null) return `<div class="rcard"><p>No result.</p></div>`;
   if(typeof r!=="object") return `<div class="rcard"><p>${esc(r)}</p></div>`;
   // plain-text wrapped command output
@@ -537,16 +546,16 @@ function renderBody(r){
           <span class="chip">level <b>${esc(r.level)}</b></span>
           ${r.status?`<span class="chip">status <b>${esc(r.status)}</b></span>`:""}
           ${r.sponsor?`<span class="chip">sponsor <b>${esc(r.sponsor)}</b></span>`:""}
-        </div></div></div>${factorList(r.factors)}${rawDetails(r)}</div>`;
+        </div></div></div>${factorList(r.factors,main)}${rawDetails(r)}</div>`;
   }
   // compare side-by-side
   if(r.drug_a&&r.drug_b) return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
       ${sideCard(r.drug_a)}${sideCard(r.drug_b)}</div>`+rawDetails(r);
   // trials/results table (with the relevance-filter note when present)
   const arr=r.results||r.trials||r.sources||null;
-  if(Array.isArray(arr)) return `<div class="rcard">${scalarChips(r)}${filteredNote(r)}${objTable(arr)}</div>`;
+  if(Array.isArray(arr)) return `<div class="rcard">${scalarChips(r)}${filteredNote(r)}${objTable(arr,main)}</div>`;
   // generic object
-  return `<div class="rcard">${scalarChips(r)}${nestedArrays(r)}${rawDetails(r)}</div>`;
+  return `<div class="rcard">${scalarChips(r)}${nestedArrays(r,main)}${rawDetails(r)}</div>`;
 }
 
 // Relevance-filter transparency: when the server's gate hid off-topic trials
@@ -562,8 +571,9 @@ function filteredNote(r){
 }
 
 function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x.drug||"—")}</h3>${scalarChips(x)}</div>`;}
-function factorList(f){if(!Array.isArray(f)||!f.length)return"";
-  return `<ul class="li" style="margin-top:.6rem">`+f.map(x=>`<li>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
+function factorList(f,main){if(!Array.isArray(f)||!f.length)return"";
+  const tag=i=>f===main?` data-ri="${i}"`:"";
+  return `<ul class="li" style="margin-top:.6rem">`+f.map((x,i)=>`<li${tag(i)}>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
 function scalarChips(o){const c=Object.entries(o).filter(([k,v])=>v!=null&&typeof v!=="object")
     .map(([k,v])=>`<span class="chip">${esc(k)} <b>${nctLink(v)||urlLink(v)||esc(String(v).slice(0,60))}</b></span>`).join("");
   return c?`<div class="chips">${c}</div>`:"";}
@@ -576,18 +586,22 @@ function cellText(v){
   if(typeof v==="object")return JSON.stringify(v);
   return String(v);
 }
-function objTable(arr){
+function objTable(arr,main){
   if(!arr.length) return `<p style="color:#888">Empty.</p>`;
   if(typeof arr[0]!=="object") return `<ul class="li">`+arr.map(x=>`<li>${nctLink(x)||urlLink(x)||esc(x)}</li>`).join("")+`</ul>`;
   const cols=Array.from(new Set(arr.flatMap(o=>Object.keys(o)))).filter(k=>typeof (arr[0][k])!=="object").slice(0,6);
+  // The exportable array is rendered IN FULL (WYSIWYG: what's on screen is
+  // what exports) and each row carries its data index; other arrays keep the
+  // 25-row preview cap.
+  const isMain=arr===main, shown=isMain?arr:arr.slice(0,25);
   // NOTE: truncate BEFORE esc() — slicing the escaped string could cut an
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
-  const rows=arr.slice(0,25).map(o=>`<tr>${cols.map(c=>`<td>${nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80))}</td>`).join("")}</tr>`).join("");
+  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td>${nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80))}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
-     ${arr.length>25?`<p style="color:#888;font-size:.8rem">…and ${arr.length-25} more</p>`:""}`;
+     ${arr.length>shown.length?`<p style="color:#888;font-size:.8rem">…and ${arr.length-shown.length} more</p>`:""}`;
 }
-function nestedArrays(o){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length)
-    .map(([k,v])=>`<h3 style="margin-top:.8rem;font-size:.95rem">${esc(k.replace(/_/g," "))}</h3>${objTable(v)}`).join("");}
+function nestedArrays(o,main){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length)
+    .map(([k,v])=>`<h3 style="margin-top:.8rem;font-size:.95rem">${esc(k.replace(/_/g," "))}</h3>${objTable(v,main)}`).join("");}
 function rawDetails(r){return `<details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`;}
 
 // ═══════════════════════ Export suite (CSV · Excel · BibTeX · JSON) ═══════════════════════
@@ -654,10 +668,54 @@ function trialExportRow(r){
   return out;
 }
 const isTrialRow=r=>r&&typeof r==="object"&&/^NCT\d{8}$/.test(String(r.id||""));
+
+// ── Live view registry: every rendered result registers a getter returning
+// the rows exactly as the user currently sees them (after the 🔍 filter and
+// column sort), plus a human-readable list of the filters that produced them.
+// Without this the exports silently ignore the on-screen filters and hand
+// back the full result set. ──
+const viewProviders={};
+
+function registerView(key,fn){ viewProviders[key]=fn; }
+
+// Generic provider: the DOM is the single filter chain (the qfilter handler
+// hides rows, the sort handler reorders them), so the provider reads the
+// data-ri tags of the rows still visible, in on-screen order. Returns null
+// when the rendered block for this key is gone (stale) → caller falls back.
+function domViewProvider(key){
+  return function(){
+    const scope=document.querySelector('[data-exportkey="'+key+'"]');
+    const data=rowsFromLastData(key);
+    if(!scope||!data)return null;
+    const els=scope.querySelectorAll("[data-ri]");
+    const filters=[];
+    const q=scope.querySelector(".qfilter");
+    if(q&&q.value.trim())filters.push('filter: "'+q.value.trim()+'"');
+    const th=scope.querySelector('th[data-dir="asc"],th[data-dir="desc"]');
+    if(th)filters.push("sort: "+th.textContent.replace(/[⇅↑↓]/g,"").trim()+" "+th.dataset.dir);
+    if(!els.length)return {rows:data,filters};   // untagged shape: nothing filterable on screen
+    const rows=[];
+    els.forEach(el=>{
+      if(el.style.display==="none")return;       // hidden by the quick filter
+      const i=parseInt(el.getAttribute("data-ri"),10);
+      if(data[i]!==undefined)rows.push(data[i]); // querySelectorAll = document order = sorted order
+    });
+    return {rows:rows,filters:filters};
+  };
+}
+
+// The one row source for ALL exports. raw = the data rows as stored (BibTeX
+// and JSON need the original field names); rows = shaped for CSV/Excel;
+// scope = the active filters, for the provenance header.
 function exportRows(key){
-  const rows=rowsFromLastData(key);
-  if(!rows)return null;
-  return rows.every(isTrialRow)?rows.map(trialExportRow):rows;
+  const p=viewProviders[key];
+  let raw=null,scope="";
+  if(typeof p==="function"){
+    const v=p()||{};
+    if(Array.isArray(v.rows)){raw=v.rows;scope=(v.filters||[]).join(" · ");}
+  }
+  if(!raw)raw=rowsFromLastData(key)||[];         // fallback: unfiltered module
+  return {rows:raw.length&&raw.every(isTrialRow)?raw.map(trialExportRow):raw, raw:raw, scope:scope};
 }
 
 // ── CSV (RFC4180). Excel-safe: BOM + CRLF + explicit separator hint. ──
@@ -688,38 +746,53 @@ function toCSV(rows,metaLine){
   return String.fromCharCode(0xFEFF)+lines.join("\r\n");
 }
 
-// exportMetaLine describes the export scope for the file header row: which
-// command, and that the rows are a subset ("showing 10 of 4004 matching").
-// Deliberately comma-free so it stays one CSV cell even unquoted.
-function exportMetaLine(key){
-  const d=lastData[key];
-  if(!d)return "Trialvera export";
+// exportHeader is the provenance line written into every exported file:
+// app · analysis · query · "showing N of M rows" · active filters · source · date.
+function exportHeader(key,rows){
+  const total=(rowsFromLastData(key)||[]).length;
+  const shown=rows?rows.length:0;
+  const d=lastData[key]||{};
   const r=(d.response&&typeof d.response.result==="object"&&d.response.result)||{};
-  const cmd=(d.response&&d.response.command)||key;
-  let scope="";
-  if(typeof r.returned==="number"&&typeof r.total_matching==="number")
-    scope=" · showing "+r.returned+" of "+r.total_matching+" matching trials";
-  else if(Array.isArray(d.rows)&&d.rows.length)
-    scope=" · "+d.rows.length+" rows";
-  return "Trialvera export · command: "+cmd+scope+" · source: ClinicalTrials.gov · "+new Date().toISOString().slice(0,10);
+  const parts=["Trialvera export"];
+  parts.push(ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key));
+  if(d.query)parts.push('query: "'+d.query+'"');
+  parts.push(total&&total!==shown?("showing "+shown+" of "+total+" rows"):(shown+" rows"));
+  const sc=exportRows(key).scope;
+  if(sc)parts.push(sc);
+  if(typeof r.total_matching==="number"&&r.total_matching!==total)
+    parts.push(r.total_matching+" matching on registry");
+  parts.push("source: ClinicalTrials.gov");
+  parts.push(new Date().toISOString().slice(0,10));
+  return parts.join(" · ");
+}
+
+const EMPTY_EXPORT_MSG="Run an analysis first — or clear the filters, nothing is visible.";
+
+function csvExport(key){
+  const v=exportRows(key);
+  if(!v.rows.length)return null;
+  return toCSV(v.rows,exportHeader(key,v.rows));
 }
 
 function downloadCSV(key,filename){
   if(!lastData[key]){alert("Run a command first.");return;}
-  const rows=exportRows(key);
-  if(!rows){alert("CSV export is not available for this result — use JSON.");return;}
-  triggerDownload(new Blob([toCSV(rows,exportMetaLine(key))],{type:"text/csv;charset=utf-8"}),filename);
+  if(!rowsFromLastData(key)){alert("CSV export is not available for this result — use JSON.");return;}
+  const text=csvExport(key);
+  if(text==null){alert(EMPTY_EXPORT_MSG);return;}
+  triggerDownload(new Blob([text],{type:"text/csv;charset=utf-8"}),filename);
 }
 
 // ── XLSX: centered numbers, left-aligned long text, styled header ──
 function downloadXLSX(key,filename){
   if(!lastData[key]){alert("Run a command first.");return;}
-  const rows=exportRows(key);
-  if(!rows){alert("Excel export is not available for this result — use JSON.");return;}
+  if(!rowsFromLastData(key)){alert("Excel export is not available for this result — use JSON.");return;}
+  const v=exportRows(key);
+  const rows=v.rows;
+  if(!rows.length){alert(EMPTY_EXPORT_MSG);return;}
   const cols=[];
   rows.forEach(r=>Object.keys(r||{}).forEach(k=>{if(!cols.includes(k))cols.push(k);}));
-  // Row 0 = scope header ("showing 10 of 4004"), row 1 = column header.
-  const aoa=[[exportMetaLine(key)],cols].concat(rows.map(r=>cols.map(c=>{
+  // Row 0 = provenance header ("showing 7 of 100"), row 1 = column header.
+  const aoa=[[exportHeader(key,rows)],cols].concat(rows.map(r=>cols.map(c=>{
     const v=r?r[c]:"";
     if(v===null||v===undefined)return "";
     if(v===true)return "Yes";
@@ -759,6 +832,8 @@ function downloadXLSX(key,filename){
     }
   }
   ws["!cols"]=colInfo.map(ci=>({wch:ci.wch}));
+  // Provenance row spans the full table width; data starts frozen below row 2.
+  if(cols.length>1)ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:cols.length-1}}];
   ws["!freeze"]={xSplit:0,ySplit:2};
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Trialvera");
@@ -806,19 +881,45 @@ function analysisBibTeX(key,rows){
     "}\n";
 }
 
+function bibExport(key){
+  const v=exportRows(key);
+  const total=(rowsFromLastData(key)||[]).length;
+  if(total&&!v.raw.length)return null;           // everything filtered out
+  const trials=v.raw.filter(isTrialRow);
+  const cited=trials.length?trials:v.raw;
+  const body=trials.length?toBibTeX(trials):analysisBibTeX(key,v.raw);
+  return "% "+exportHeader(key,cited)+"\n\n"+body;
+}
+
 function downloadBibTeX(key,filename){
   if(!lastData[key]){alert("Run a command first.");return;}
-  const rows=rowsFromLastData(key);
-  const trials=(rows||[]).filter(isTrialRow);
-  const text=trials.length?toBibTeX(trials):analysisBibTeX(key,rows);
+  const text=bibExport(key);
+  if(text==null){alert(EMPTY_EXPORT_MSG);return;}
   triggerDownload(new Blob([text],{type:"application/x-bibtex;charset=utf-8"}),filename);
 }
 
-// ── JSON (full API response) + shared download trigger ──
+// ── JSON: {export: provenance, rows: the rows as seen on screen}. Results
+// with no tabular rows keep the full API response under `response`. ──
+function jsonExport(key){
+  const d=lastData[key];
+  if(!d)return null;
+  const v=exportRows(key);
+  const total=(rowsFromLastData(key)||[]).length;
+  const meta={app:"Trialvera",
+    analysis:ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key),
+    query:d.query||"",filters:v.scope,
+    rows_exported:v.raw.length,rows_total:total,
+    source:"ClinicalTrials.gov",exported_at:new Date().toISOString()};
+  if(!total)return {export:meta,response:d.response};
+  return {export:meta,rows:v.raw};
+}
+
 function downloadJSON(key,filename){
   const d=lastData[key];
   if(!d){alert("Run a command first.");return;}
-  triggerDownload(new Blob([JSON.stringify(d.response,null,2)],{type:"application/json"}),filename);
+  const obj=jsonExport(key);
+  if(obj&&Array.isArray(obj.rows)&&!obj.rows.length){alert(EMPTY_EXPORT_MSG);return;}
+  triggerDownload(new Blob([JSON.stringify(obj,null,2)],{type:"application/json"}),filename);
 }
 
 function triggerDownload(blob,filename){
@@ -859,16 +960,23 @@ document.addEventListener("input",e=>{
   if(!el.classList||!el.classList.contains("qfilter"))return;
   const scope=el.closest(".results")||document;
   const q=el.value.trim().toLowerCase();
-  let total=0,shown=0;
   scope.querySelectorAll("table tbody tr, ul.li li").forEach(row=>{
-    total++;
-    const hit=!q||row.textContent.toLowerCase().includes(q);
-    row.style.display=hit?"":"none";
-    if(hit)shown++;
+    row.style.display=(!q||row.textContent.toLowerCase().includes(q))?"":"none";
   });
-  const qc=scope.querySelector(".qcount");
-  if(qc)qc.textContent=q?" · "+shown+" / "+total+" rows":"";
+  refreshQCount(scope);
 });
+
+// The counter ALWAYS shows the final post-filter count ("7 / 100 rows") — it
+// is the user's only preview of how many rows an export will contain, so it
+// counts the exportable (data-ri-tagged) rows when the result has them.
+function refreshQCount(scope){
+  const tagged=scope.querySelectorAll("[data-ri]");
+  const cand=tagged.length?tagged:scope.querySelectorAll("table tbody tr, ul.li li");
+  let shown=0;
+  cand.forEach(r=>{if(r.style.display!=="none")shown++;});
+  const qc=scope.querySelector(".qcount");
+  if(qc)qc.textContent=cand.length?" · "+shown+" / "+cand.length+" rows":"";
+}
 
 // ── Sortable columns: one delegated click handler on result-table headers —
 // render functions stay untouched. ⇅/↑/↓ indicator, numeric auto-detect. ──
