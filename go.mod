@@ -1,3 +1,3 @@
-module clinical-trials-web
+module pubvera-trialvera
 
 go 1.26.4

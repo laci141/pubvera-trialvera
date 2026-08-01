@@ -107,8 +107,8 @@ func TestRelevanceGateOddShapesUnchanged(t *testing.T) {
 	for _, raw := range [][]byte{
 		[]byte(`not json`),
 		[]byte(`[1,2,3]`),
-		[]byte(`{"trials":[{"id":"x"}]}`),  // no results key
-		[]byte(`{"results":"oops"}`),       // results not an array
+		[]byte(`{"trials":[{"id":"x"}]}`), // no results key
+		[]byte(`{"results":"oops"}`),      // results not an array
 	} {
 		if got := relevanceGate(raw, "diabetes"); !bytes.Equal(got, raw) {
 			t.Errorf("input %q must pass through unchanged, got %q", raw, got)
@@ -238,7 +238,7 @@ func TestPhaseDistributionPassthrough(t *testing.T) {
 	for _, raw := range [][]byte{
 		[]byte(`not json`),
 		[]byte(`[1,2]`),
-		[]byte(`{"returned":3,"trials":[{"id":"x"}]}`),                     // no phase_distribution
+		[]byte(`{"returned":3,"trials":[{"id":"x"}]}`),                    // no phase_distribution
 		[]byte(`{"phase_distribution":[{"label":"N/A","count":1}]}`),      // no trial list
 		[]byte(`{"phase_distribution":"oops","trials":"also-oops"}`),      // wrong shapes
 		[]byte(`{"score":0.4,"level":"medium","factors":[{"name":"x"}]}`), // risk shape

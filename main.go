@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -94,11 +95,12 @@ func firstNonEmpty(vals ...string) string {
 }
 
 // cmdSpec describes how to turn a request into a CLI invocation for one command.
-//   build   -> ordered positional args (after the subcommand); error if a
-//              required input is missing.
-//   limit   -> append --limit <n> when the caller supplied one.
-//   format  -> append --format <v> when the caller supplied one (only for the
-//              commands that actually accept it).
+//
+//	build   -> ordered positional args (after the subcommand); error if a
+//	           required input is missing.
+//	limit   -> append --limit <n> when the caller supplied one.
+//	format  -> append --format <v> when the caller supplied one (only for the
+//	           commands that actually accept it).
 type cmdSpec struct {
 	build  func(r request) ([]string, error)
 	limit  bool
@@ -133,8 +135,10 @@ var groups = map[string]map[string]cmdSpec{
 		"forecast":         {build: func(r request) ([]string, error) { return req1("nct-id", target(r)) }},
 		"enrollment-check": {build: func(r request) ([]string, error) { return req1("nct-id", target(r)) }},
 		"evidence":         {build: func(r request) ([]string, error) { return req1("nct-id-or-term", target(r)) }, limit: true},
-		"safety":           {build: func(r request) ([]string, error) { return req1("drug", firstNonEmpty(r.Drug, r.Condition, r.Query, r.Nctid)) }, limit: true},
-		"timeline":         {build: func(r request) ([]string, error) { return req1("nct-id", target(r)) }},
+		"safety": {build: func(r request) ([]string, error) {
+			return req1("drug", firstNonEmpty(r.Drug, r.Condition, r.Query, r.Nctid))
+		}, limit: true},
+		"timeline": {build: func(r request) ([]string, error) { return req1("nct-id", target(r)) }},
 	},
 	"comparison": {
 		"compare": {build: func(r request) ([]string, error) {
@@ -207,7 +211,7 @@ func main() {
 		addr = "0.0.0.0:" + p
 	}
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	log.Printf("clinical-trials-web listening on %s (CLI: %s)", addr, cliBinaryPath())
+	log.Printf("clinical-trials-web listening on %s (CLI: %s, slots=%d)", addr, cliBinaryPath(), cliSem.capacity())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)
 	}
@@ -359,6 +363,15 @@ func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider, bodyModel
 // LLM failure never fails the request — the response degrades to
 // llm_source:"keyless" plus a redacted llm_error.
 func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string) {
+	if err := cliSem.acquire(r.Context()); err != nil {
+		if errors.Is(err, errCLIBusy) {
+			w.Header().Set("Retry-After", strconv.Itoa(cliSlotRetryAfter))
+		}
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	defer cliSem.release()
+
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 

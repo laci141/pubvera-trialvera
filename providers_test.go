@@ -158,8 +158,8 @@ func TestCompactForLLMNoLargeArraysUnchanged(t *testing.T) {
 func TestCompactForLLMInvalidInputsUnchanged(t *testing.T) {
 	for _, raw := range [][]byte{
 		[]byte(`not json at all`),
-		[]byte(`[1,2,3]`),                // top level not an object
-		[]byte(`{"results":"oops"}`),     // results not an array
+		[]byte(`[1,2,3]`),                 // top level not an object
+		[]byte(`{"results":"oops"}`),      // results not an array
 		[]byte(`{"drug_a":"not-object"}`), // compare key not an object
 	} {
 		if got := compactForLLM(raw); !bytes.Equal(got, raw) {
