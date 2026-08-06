@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Trialvera — search, filter and analyse clinical trials. Registry data from ClinicalTrials.gov, keyless and open. Part of the Pubvera research suite.">
 <title>Trialvera — Clinical Trial Search &amp; Analysis</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82f6'/%3E%3Cg fill='%23ffffff' transform='translate(32 32) scale(0.82) translate(-32 -32)'%3E%3Crect x='6' y='11' width='42' height='8.1' rx='3.7'/%3E%3Crect x='11.3' y='24' width='31.3' height='8.1' rx='3.7'/%3E%3Crect x='16.7' y='37' width='20.7' height='8.1' rx='3.7'/%3E%3Crect x='22' y='50' width='10' height='8.1' rx='3.7'/%3E%3Crect x='51' y='25.3' width='7' height='5.5' rx='2.75' opacity='0.74'/%3E%3Crect x='51' y='38.3' width='7' height='5.5' rx='2.75' opacity='0.94'/%3E%3Crect x='51' y='51.3' width='7' height='5.5' rx='2.75'/%3E%3C/g%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -22,10 +23,23 @@
       radial-gradient(circle at 75% 75%,rgba(255,171,76,.20),transparent 55%),
       linear-gradient(135deg,#0a0a12 0%,#15152a 100%)}
 
+  /* BRAND BAR — Pubvera mark + wordmark, links back to the hub. The SVG is
+     inlined rather than linked from pubvera.com so the app does not depend on
+     Cloudflare Pages being up, and so the mark can inherit currentColor. */
+  .brand-bar{position:fixed;top:1rem;left:1rem;z-index:900;
+    display:flex;align-items:center;gap:.45rem;padding:.5rem .9rem;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:999px;
+    -webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);
+    box-shadow:0 8px 32px rgba(0,0,0,.3);text-decoration:none;
+    transition:border-color .2s,transform .2s}
+  .brand-bar:hover{border-color:rgba(0,212,255,.5);transform:translateY(-1px)}
+  .brand-mark{color:#60a5fa;flex-shrink:0}
+  .brand-word{font-size:.95rem;font-weight:700;color:#e8eef7;letter-spacing:-.01em}
+
   /* transparent hero: the colorful body::before gradient must show through
      behind .search-box, or its backdrop-filter has nothing to blur */
   .hero{min-height:auto;display:flex;flex-direction:column;justify-content:center;align-items:center;
-    padding:3.5rem 1rem 1rem;text-align:center;background:transparent}
+    padding:5rem 1rem 1rem;text-align:center;background:transparent}
   .hero h1{font-size:clamp(2rem,5vw,3.5rem);font-weight:700;margin-bottom:.5rem;
     background:linear-gradient(90deg,#00d4ff,#7c3aed);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .hero p{font-size:1.15rem;color:#bdbdbd;margin-bottom:2rem;max-width:78ch;text-shadow:0 1px 6px rgba(0,0,0,.55)}
@@ -171,7 +185,10 @@
     text-align:center;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:.9rem;
     -webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
   @media(max-width:768px){
-    .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:3rem}
+    .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:4.5rem}
+    .brand-bar{top:.5rem;left:.5rem;padding:.35rem .5rem;
+      -webkit-backdrop-filter:blur(11px);backdrop-filter:blur(11px)}
+    .brand-word{font-size:.82rem}
     /* mobile: lighter blur + tighter padding on the glass panels */
     .search-box{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem;max-width:96%}
     .card{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:1.2rem}
@@ -185,8 +202,23 @@
 </head>
 <body>
 
+<a class="brand-bar" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
+  <svg class="brand-mark" viewBox="0 0 64 64" width="22" height="22" aria-hidden="true" focusable="false">
+    <g fill="currentColor">
+      <rect x="6.0" y="11.0" width="42.0" height="8.1" rx="3.7"/>
+      <rect x="11.3" y="24.0" width="31.3" height="8.1" rx="3.7"/>
+      <rect x="16.7" y="37.0" width="20.7" height="8.1" rx="3.7"/>
+      <rect x="22.0" y="50.0" width="10.0" height="8.1" rx="3.7"/>
+      <rect x="51" y="25.3" width="7" height="5.5" rx="2.75" opacity="0.55"/>
+      <rect x="51" y="38.3" width="7" height="5.5" rx="2.75" opacity="0.70"/>
+      <rect x="51" y="51.3" width="7" height="5.5" rx="2.75" opacity="0.88"/>
+    </g>
+  </svg>
+  <span class="brand-word">Pubvera</span>
+</a>
+
 <section class="hero">
-  <h1>🔬 Pubvera · Trialvera</h1>
+  <h1>🔬 Trialvera</h1>
   <p>Search, filter and analyse clinical trials — registry data from ClinicalTrials.gov, enriched with PubMed, OpenAlex &amp; FDA FAERS safety signals. Keyless and open, 30+ commands in six groups.</p>
   <div class="search-box">
     <input id="heroQuery" type="text" placeholder="Disease, drug, or NCT ID — e.g. 'diabetes' or 'NCT07437157'">
