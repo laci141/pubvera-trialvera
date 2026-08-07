@@ -483,10 +483,47 @@ type anthropicRequest struct {
 // llmSynthesize makes one chat call to the selected provider and parses the
 // structured synthesis. Every returned error is already safe to expose: key
 // redacted, control bytes stripped, body truncated.
+// Failure kinds for the llm: fail log line. They exist because two failures
+// that demand opposite responses were indistinguishable in the log:
+// openrouter/free returning nothing until the 60s deadline (the fix is to drop
+// that provider — nothing here is wrong) and a model answering promptly with
+// prose instead of JSON (a prompt or parser problem). Only elapsed_ms told
+// them apart, and only because one happened to land on the timeout, so a
+// regression making every response unparseable would have been invisible.
+//
+// The kind is fixed where the error is built, never inferred from its text:
+// rewording a message must not silently reclassify the failure.
+const (
+	llmFailUnparseable = "unparseable" // a reply arrived but is not the expected JSON
+	llmFailUpstream    = "upstream"    // transport, read, timeout, or a 5xx
+	llmFailRejected    = "rejected"    // refused before any model work: key, model, quota
+	llmFailOther       = "other"       // catch-all; the field is never empty
+)
+
+// llmError attaches the kind without touching the message: Error() returns the
+// already-sanitized text verbatim, so the client-facing llm_error is unchanged.
+type llmError struct {
+	kind string
+	msg  string
+}
+
+func (e *llmError) Error() string { return e.msg }
+
+func newLLMError(kind, msg string) error { return &llmError{kind: kind, msg: msg} }
+
+// llmFailKindOf falls back to the catch-all so the log field always has a value.
+func llmFailKindOf(err error) string {
+	var e *llmError
+	if errors.As(err, &e) && e.kind != "" {
+		return e.kind
+	}
+	return llmFailOther
+}
+
 func llmSynthesize(ctx context.Context, provider, key, model, command string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
 	spec, ok := providers[provider]
 	if !ok { // callers validate first; belt and braces
-		return nil, errors.New("unknown provider")
+		return nil, newLLMError(llmFailRejected, "unknown provider")
 	}
 	if model == "" {
 		model = spec.DefaultModel
@@ -509,14 +546,14 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %v", err)
+		return nil, newLLMError(llmFailOther, fmt.Sprintf("marshal request: %v", err))
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, errors.New("build request: " + sanitizeLLMError(err.Error(), key))
+		return nil, newLLMError(llmFailOther, "build request: "+sanitizeLLMError(err.Error(), key))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if spec.Style == styleAnthropic {
@@ -530,24 +567,31 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	if err != nil {
 		// Transport errors can embed the URL but never the key (it travels in a
 		// header); sanitize anyway.
-		return nil, errors.New("request failed: " + sanitizeLLMError(err.Error(), key))
+		return nil, newLLMError(llmFailUpstream, "request failed: "+sanitizeLLMError(err.Error(), key))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, errors.New("read response: " + sanitizeLLMError(err.Error(), key))
+		return nil, newLLMError(llmFailUpstream, "read response: "+sanitizeLLMError(err.Error(), key))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("provider returned HTTP %d: %s", resp.StatusCode, sanitizeLLMError(string(respBody), key))
+		// A 4xx is the provider refusing before any model work — bad key,
+		// unknown model, quota. A 5xx is their side breaking, same bucket as a
+		// transport fault.
+		kind := llmFailUpstream
+		if resp.StatusCode < 500 {
+			kind = llmFailRejected
+		}
+		return nil, newLLMError(kind, fmt.Sprintf("provider returned HTTP %d: %s", resp.StatusCode, sanitizeLLMError(string(respBody), key)))
 	}
 
 	text, err := extractChatText(spec.Style, respBody)
 	if err != nil {
-		return nil, errors.New(sanitizeLLMError(err.Error(), key))
+		return nil, newLLMError(llmFailUnparseable, sanitizeLLMError(err.Error(), key))
 	}
 	syn, err := parseSynthesis(text)
 	if err != nil {
-		return nil, errors.New("unparseable synthesis: " + sanitizeLLMError(err.Error(), key))
+		return nil, newLLMError(llmFailUnparseable, "unparseable synthesis: "+sanitizeLLMError(err.Error(), key))
 	}
 	syn.Model = model
 	// Post-validation against the FULL CLI JSON (pre-compaction): statements

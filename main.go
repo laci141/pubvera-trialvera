@@ -449,7 +449,7 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		if err != nil {
 			// Already sanitized/redacted by providers.go; safe for client + log-free.
 			// The log gets duration and provider only — never the message.
-			log.Printf("llm: fail provider=%s cmd=%s elapsed_ms=%d", b.provider, cmd, llmElapsed)
+			log.Printf("llm: fail provider=%s cmd=%s elapsed_ms=%d kind=%s", b.provider, cmd, llmElapsed, llmFailKindOf(err))
 			resp["llm_error"] = err.Error()
 		} else {
 			log.Printf("llm: ok provider=%s cmd=%s elapsed_ms=%d", b.provider, cmd, llmElapsed)
