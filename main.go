@@ -363,7 +363,11 @@ func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider, bodyModel
 // LLM failure never fails the request — the response degrades to
 // llm_source:"keyless" plus a redacted llm_error.
 func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string) {
-	if err := cliSem.acquire(r.Context()); err != nil {
+	waitStart := time.Now()
+	err := cliSem.acquire(r.Context())
+	waitMS := time.Since(waitStart).Milliseconds()
+	if err != nil {
+		log.Printf("cli: busy cmd=%s wait_ms=%d err=%v", cmd, waitMS, err)
 		if errors.Is(err, errCLIBusy) {
 			w.Header().Set("Retry-After", strconv.Itoa(cliSlotRetryAfter))
 		}
@@ -384,16 +388,24 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 
-	if err := c.Run(); err != nil {
+	runStart := time.Now()
+	runErr := c.Run()
+	elapsed := time.Since(runStart).Milliseconds()
+	if runErr != nil {
+		// err=exec only: the message below is redacted for the client, but that
+		// redaction depends on b.key being non-empty — a keyless request would
+		// put raw stderr in the log.
+		log.Printf("cli: fail cmd=%s wait_ms=%d elapsed_ms=%d err=exec", cmd, waitMS, elapsed)
 		msg := redact(strings.TrimSpace(stderr.String()), b.key)
 		if msg == "" {
-			msg = redact(err.Error(), b.key)
+			msg = redact(runErr.Error(), b.key)
 		}
 		writeError(w, http.StatusBadGateway, "CLI failed: "+msg)
 		return
 	}
 
 	raw := bytes.TrimSpace(stdout.Bytes())
+	log.Printf("cli: ok cmd=%s wait_ms=%d elapsed_ms=%d bytes=%d json=%t", cmd, waitMS, elapsed, len(raw), json.Valid(raw))
 	var result json.RawMessage
 	if json.Valid(raw) {
 		result = raw
@@ -402,6 +414,12 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		// Best-effort — any doubt passes the JSON through unchanged.
 		if group == "search-discovery" && relevanceGatedCmds[cmd] && len(inputs) > 0 {
 			result = relevanceGate(result, inputs[0])
+			var gated struct {
+				FilteredCount int `json:"filtered_count"`
+			}
+			// Best-effort: absent or unparseable filtered_count logs as 0.
+			_ = json.Unmarshal(result, &gated)
+			log.Printf("gate: cmd=%s kept_bytes=%d filtered_count=%d", cmd, len(result), gated.FilteredCount)
 		}
 		// Rebuild phase_distribution so its counts always sum to the number of
 		// trials returned (the CLI skips phaseless trials and double-counts
@@ -420,11 +438,17 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		"result":     result,
 	}
 	if b.key != "" && !noLLMGroups[group] && !noLLMCmds[cmd] {
+		log.Printf("llm: call provider=%s cmd=%s", b.provider, cmd)
+		llmStart := time.Now()
 		syn, err := llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, result)
+		llmElapsed := time.Since(llmStart).Milliseconds()
 		if err != nil {
 			// Already sanitized/redacted by providers.go; safe for client + log-free.
+			// The log gets duration and provider only — never the message.
+			log.Printf("llm: fail provider=%s cmd=%s elapsed_ms=%d", b.provider, cmd, llmElapsed)
 			resp["llm_error"] = err.Error()
 		} else {
+			log.Printf("llm: ok provider=%s cmd=%s elapsed_ms=%d", b.provider, cmd, llmElapsed)
 			resp["llm_synthesis"] = syn
 			resp["llm_source"] = "llm:" + b.provider
 		}

@@ -5,3 +5,4 @@ cli-src/
 bin/server*
 # The linux CLI binary IS committed (Render needs it): bin/clinical-trials-pp-cli-linux
 .DS_Store
+PROMPT.md
