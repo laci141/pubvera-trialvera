@@ -280,9 +280,10 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 		"2. Back every trial-level claim with its NCT ID in the same sentence, exactly as it appears in the tool output.\n" +
 		"3. NEVER mention a country, sponsor, enrollment figure, or trial that does not appear verbatim in the tool output. Copy names and numbers character-for-character; do not paraphrase identifiers.\n" +
 		"4. Do not rank or generalize (\"X leads\", \"most trials are…\") unless the counts in the tool output directly show it.\n" +
-		"5. If the output is empty or too thin to summarize, say exactly that in the summary and caveats — never fill gaps with plausible-sounding facts.\n")
+		"5. If the output is empty or too thin to summarize, say exactly that in the summary and caveats — never fill gaps with plausible-sounding facts.\n" +
+		"6. Fields such as detail, level, score, and resolved — and any name/detail pair inside a factors array — are THIS TOOL'S OWN assessment, not facts reported by the trial or its registry. Attribute them to the tool and state what it assigned; never restate them as facts about the trial's participants, design, or results: a detail reading \"healthy enrollment target\" says the enrollment TARGET is realistic and says NOTHING about participants being healthy. Where the trial's own title or conditions contradict such a field, the trial's own words win.\n")
 	if facts != "" {
-		b.WriteString("6. Any number you state must come from PRE-COMPUTED FACTS above. Do not count items yourself. If a number is not listed there, do not mention that quantity at all — describe it qualitatively instead.\n")
+		b.WriteString("7. Any number you state must come from PRE-COMPUTED FACTS above. Do not count items yourself. If a number is not listed there, do not mention that quantity at all — describe it qualitatively instead.\n")
 	}
 	b.WriteString("Your response is post-validated by software: statements referencing NCT IDs, countries, or numbers absent from the tool output are removed.\n\n" +
 		"Respond with ONLY a JSON object, no markdown fences, with exactly these fields:\n" +
