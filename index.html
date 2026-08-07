@@ -653,18 +653,56 @@ const ANALYSIS_LABEL={search:"Clinical trial search",digest:"Trial digest snapsh
 const ROW_KEYS=["results","trials","sources","matches","newest","recently_terminated",
   "factors","all_factors","primary_concerns","events","reports"];
 
-// Flatten an object to its scalar fields (arrays of scalars join with "; ").
+// Label/count pairs are the only nested array shape worth flattening: they
+// read cleanly as one cell. Detected by shape, not by field name, so any
+// future tally array is covered. Richer objects stay skipped — they would
+// produce an unreadable cell.
+const LABEL_KEYS=["label","name","phase"],COUNT_KEYS=["count","n","trials"];
+function labelCountPair(arr){
+  let lk=null,ck=null;
+  for(const x of arr){
+    if(x==null||typeof x!=="object"||Array.isArray(x))return null;
+    const keys=Object.keys(x);
+    if(keys.length>3)return null;
+    const l=LABEL_KEYS.find(k=>keys.includes(k)),c=COUNT_KEYS.find(k=>keys.includes(k));
+    // Every element must agree on the pair, else the join would mix fields.
+    if(!l||!c||(lk&&(l!==lk||c!==ck)))return null;
+    lk=l;ck=c;
+  }
+  return lk?[lk,ck]:null;
+}
+
+// Flatten an object to its scalar fields (arrays of scalars join with "; ",
+// label/count arrays as "label (count); …").
 function flatScalars(o){const out={};Object.entries(o||{}).forEach(([k,v])=>{
   if(v==null)return;
-  if(Array.isArray(v)){if(v.every(x=>typeof x!=="object"))out[k]=v.join("; ");return;}
+  if(Array.isArray(v)){
+    if(v.every(x=>typeof x!=="object")){out[k]=v.join("; ");return;}
+    const lc=labelCountPair(v);
+    if(lc)out[k]=v.map(x=>x[lc[0]]+" ("+x[lc[1]]+")").join("; ");
+    return;}
   if(typeof v!=="object")out[k]=v;});return out;}
+
+// Factor-style arrays describe their parent record and carry no id of their
+// own, so an export of them alone loses the trial they belong to. Trial
+// arrays already identify themselves and must not be touched.
+const FACTOR_KEYS=new Set(["factors","all_factors","primary_concerns"]);
+const IDENTITY_KEYS=["id","nct_id","title","score","level"];
+function withParentIdentity(parent,rows){
+  const flat=flatScalars(parent),id={};
+  IDENTITY_KEYS.forEach(k=>{if(flat[k]!=null)id[k]=flat[k];});
+  if(!Object.keys(id).length)return rows;
+  // The row's own value wins on a clash — it is the more specific one.
+  return rows.map(row=>Object.assign({},id,row));
+}
 
 // Pull the main row array out of a command result. compare gets its two drug
 // cards as two flattened rows; otherwise the first array-of-objects wins.
 function extractRows(r){
   if(r==null||typeof r!=="object")return null;
   if(r.drug_a&&r.drug_b)return [flatScalars(r.drug_a),flatScalars(r.drug_b)];
-  for(const k of ROW_KEYS){const v=r[k];if(Array.isArray(v)&&v.length&&typeof v[0]==="object")return v;}
+  for(const k of ROW_KEYS){const v=r[k];if(Array.isArray(v)&&v.length&&typeof v[0]==="object")
+    return FACTOR_KEYS.has(k)?withParentIdentity(r,v):v;}
   for(const v of Object.values(r)){if(Array.isArray(v)&&v.length&&typeof v[0]==="object")return v;}
   return null;
 }
@@ -789,6 +827,10 @@ function exportHeader(key,rows){
   parts.push(ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key));
   if(d.query)parts.push('query: "'+d.query+'"');
   parts.push(total&&total!==shown?("showing "+shown+" of "+total+" rows"):(shown+" rows"));
+  // Spell out the gate's removals: a reader months later must not mistake a
+  // filtered export for everything the registry returned.
+  if(typeof r.filtered_count==="number"&&r.filtered_count>0)
+    parts.push(r.filtered_count+" off-topic trial"+(r.filtered_count===1?"":"s")+" hidden by relevance filter");
   const sc=exportRows(key).scope;
   if(sc)parts.push(sc);
   if(typeof r.total_matching==="number"&&r.total_matching!==total)
@@ -942,6 +984,9 @@ function jsonExport(key){
     query:d.query||"",filters:v.scope,
     rows_exported:v.raw.length,rows_total:total,
     source:"ClinicalTrials.gov",exported_at:new Date().toISOString()};
+  // Optional so the shape stays unchanged when nothing was filtered.
+  const r=(d.response&&typeof d.response.result==="object"&&d.response.result)||{};
+  if(typeof r.filtered_count==="number"&&r.filtered_count>0)meta.filtered_count=r.filtered_count;
   if(!total)return {export:meta,response:d.response};
   return {export:meta,rows:v.raw};
 }
