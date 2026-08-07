@@ -438,9 +438,13 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		"result":     result,
 	}
 	if b.key != "" && !noLLMGroups[group] && !noLLMCmds[cmd] {
-		log.Printf("llm: call provider=%s cmd=%s", b.provider, cmd)
+		// payload_bytes is here to be greppable against the gate's kept_bytes:
+		// if a change ever lets filtered_out back into the prompt, the two
+		// numbers converge instead of the payload staying the smaller one.
+		llmResult := stripFilteredOut(result)
+		log.Printf("llm: call provider=%s cmd=%s payload_bytes=%d", b.provider, cmd, len(llmResult))
 		llmStart := time.Now()
-		syn, err := llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, result)
+		syn, err := llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, llmResult)
 		llmElapsed := time.Since(llmStart).Milliseconds()
 		if err != nil {
 			// Already sanitized/redacted by providers.go; safe for client + log-free.
@@ -602,6 +606,32 @@ func relevanceGate(raw []byte, query string) []byte {
 	obj["results"] = keptJSON
 	obj["filtered_out"] = droppedJSON
 	obj["filtered_count"] = countJSON
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// stripFilteredOut removes the gate's rejects from a result so the LLM never
+// reads them. The browser must keep filtered_out (filteredNote renders it, so
+// nothing is hidden silently), but the model must not: a diabetes search whose
+// synthesis cited NCT05147701 (eye disease) and NCT00956293 (renal
+// transplantation) drew a conclusion from trials the reader could not see,
+// both of them in filtered_out. Same pass-through discipline as the gate — any
+// error returns the input untouched, because a search must never fail here.
+func stripFilteredOut(raw []byte) []byte {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	_, hasOut := obj["filtered_out"]
+	_, hasCount := obj["filtered_count"]
+	if !hasOut && !hasCount {
+		return raw
+	}
+	delete(obj, "filtered_out")
+	delete(obj, "filtered_count")
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return raw
