@@ -612,7 +612,7 @@ function filteredNote(r){
 // top_sponsors — object-valued arrays — were readable only in Raw JSON. The
 // export path already recognises that shape via labelCountPair; the same
 // detector decides what to render here, so screen and export agree.
-function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x.drug||"—")}</h3>
+function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x.drug||x.normalized_name||x.query||"—")}</h3>
   ${scalarChips(x)}${breakdowns(x)}${sampleNote(x)}</div>`;}
 function breakdowns(o){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length&&labelCountPair(v))
     .map(([k,v])=>{const [lk,ck]=labelCountPair(v);
