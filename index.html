@@ -5,14 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Trialvera — search, filter and analyse clinical trials. Registry data from ClinicalTrials.gov, keyless and open. Part of the Pubvera research suite.">
 <title>Trialvera — Clinical Trial Search &amp; Analysis</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233b82f6'/%3E%3Cg fill='%23ffffff' transform='translate(32 32) scale(0.82) translate(-32 -32)'%3E%3Crect x='6' y='11' width='42' height='8.1' rx='3.7'/%3E%3Crect x='11.3' y='24' width='31.3' height='8.1' rx='3.7'/%3E%3Crect x='16.7' y='37' width='20.7' height='8.1' rx='3.7'/%3E%3Crect x='22' y='50' width='10' height='8.1' rx='3.7'/%3E%3Crect x='51' y='25.3' width='7' height='5.5' rx='2.75' opacity='0.74'/%3E%3Crect x='51' y='38.3' width='7' height='5.5' rx='2.75' opacity='0.94'/%3E%3Crect x='51' y='51.3' width='7' height='5.5' rx='2.75'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230a0a12'/%3E%3Cg fill='%2300d4ff'%3E%3Crect x='2' y='15' width='3.5' height='6' rx='1.5' opacity='0.45'/%3E%3Crect x='7.5' y='11' width='3.5' height='10' rx='1.5' opacity='0.65'/%3E%3Crect x='13' y='7' width='3.5' height='14' rx='1.5' opacity='0.85'/%3E%3Crect x='18.5' y='2' width='3.5' height='19' rx='1.5'/%3E%3C/g%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
-    background:linear-gradient(135deg,#0a0a12 0%,#15152a 100%);color:#e0e0e0;line-height:1.6;min-height:100vh}
+    background:linear-gradient(135deg,#0a0a12 0%,#15152a 100%);color:#e0e0e0;line-height:1.6;min-height:100vh;
+    /* keeps content clear of the fixed .brand-bar */
+    padding-top:52px}
   /* Colorful fixed backdrop so backdrop-filter blur on the glass panels has
      something visible to blur (a flat dark background makes blur a no-op). */
   body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
@@ -23,25 +25,66 @@
       radial-gradient(circle at 75% 75%,rgba(255,171,76,.20),transparent 55%),
       linear-gradient(135deg,#0a0a12 0%,#15152a 100%)}
 
-  /* BRAND BAR — Pubvera mark + wordmark, links back to the hub. The SVG is
-     inlined rather than linked from pubvera.com so the app does not depend on
-     Cloudflare Pages being up, and so the mark can inherit currentColor. */
-  .brand-bar{position:fixed;top:1rem;left:1rem;z-index:900;
-    display:flex;align-items:center;gap:.45rem;padding:.5rem .9rem;
-    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:999px;
+  /* BRAND BAR — Pubvera mark + wordmark (links back to the hub) followed by the
+     app name. The SVG is inlined rather than linked from pubvera.com so the app
+     does not depend on Cloudflare Pages being up, and so the mark can inherit
+     currentColor. Same glass treatment as the panels below. */
+  .brand-bar{position:fixed;top:0;left:0;right:0;z-index:900;
+    display:flex;align-items:center;gap:.55rem;padding:.6rem 1rem;min-width:0;
+    background:rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.1);
     -webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);
-    box-shadow:0 8px 32px rgba(0,0,0,.3);text-decoration:none;
-    transition:border-color .2s,transform .2s}
-  .brand-bar:hover{border-color:rgba(0,212,255,.5);transform:translateY(-1px)}
-  .brand-mark{color:#60a5fa;flex-shrink:0}
+    box-shadow:0 8px 32px rgba(0,0,0,.3)}
+  .brand-link{display:flex;align-items:center;gap:.45rem;text-decoration:none;flex-shrink:0;
+    transition:color .2s}
+  .brand-mark{color:#00d4ff;flex-shrink:0}
   .brand-word{font-size:.95rem;font-weight:700;color:#e8eef7;letter-spacing:-.01em}
+  .brand-link:hover .brand-word{color:#00d4ff}
+  .brand-sep{color:rgba(255,255,255,.25);flex-shrink:0}
+  .brand-app{font-size:.9rem;font-weight:600;color:#bdbdbd;letter-spacing:-.01em;
+    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* AUTH BAR (Google sign-in) — the right-hand end of the brand bar, opposite
+     the mark. Corpova, Bibliovera and Praxvera make this a SECOND fixed pill in
+     the top-right corner, because their brand bar is a corner pill too and the
+     pair has to be held apart by hand: max-width:calc(100% - 170px), percent and
+     not vw, since 100vw counts the scrollbar while a fixed element's containing
+     block does not — and that difference is exactly the width by which the two
+     would have overlapped. Trialvera's brand bar spans the whole top edge, so
+     the auth controls live INSIDE it as a flex child pushed right by
+     margin-left:auto. Same corner, same glass (the header's), and overlap is
+     impossible at any width by construction rather than by arithmetic.
+     Stays hidden until /config.json returns a Supabase config. */
+  .auth-bar{margin-left:auto;display:flex;align-items:center;gap:.5rem;min-width:0}
+  /* display:flex above would otherwise defeat the hidden attribute. */
+  .auth-bar[hidden]{display:none}
+  /* min-width:0 is what lets the ellipsis happen: a flex item defaults to
+     min-width:auto and would refuse to shrink below its text. The email is the
+     part that gives way when the row runs out of room; the buttons stay whole. */
+  .auth-email{font-size:.8rem;color:#cdd6ea;max-width:34vw;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* line-height:1 is load-bearing, not cosmetic: .brand-bar is position:fixed and
+     body clears it with a FIXED padding-top (52px / 46px), so anything that makes
+     the bar taller starts covering the page. A button's default line box is tall
+     enough to push the header past that budget on its own — pinned to 1, the pill
+     is no taller than the wordmark beside it and the header height is unchanged
+     by sign-in. Measured: +0.0px at every width tested, 320px to 1280px. */
+  .auth-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+    color:#cdd6ea;padding:.3rem .85rem;border-radius:999px;font-size:.75rem;font-weight:600;
+    font-family:inherit;line-height:1;cursor:pointer;transition:.2s;white-space:nowrap;flex-shrink:0}
+  .auth-btn:hover{background:rgba(255,255,255,.15);border-color:#2fd6a6;color:#fff}
+  /* Signing in is the primary action while signed out, so that button takes the
+     accent fill; sign-out stays the quiet variant. The accent is #2fd6a6 — this
+     file's own green (the Trial Analysis group colour, and the third stop of the
+     body backdrop), not Praxvera's blue. Dark text on an accent fill is what
+     .btn already does. */
+  .auth-btn.auth-btn-primary{background:#2fd6a6;border-color:transparent;color:#000}
+  .auth-btn.auth-btn-primary:hover{background:#2fd6a6;border-color:transparent;color:#000;
+    box-shadow:0 8px 24px rgba(47,214,166,.35)}
 
   /* transparent hero: the colorful body::before gradient must show through
      behind .search-box, or its backdrop-filter has nothing to blur */
   .hero{min-height:auto;display:flex;flex-direction:column;justify-content:center;align-items:center;
-    padding:5rem 1rem 1rem;text-align:center;background:transparent}
-  .hero h1{font-size:clamp(2rem,5vw,3.5rem);font-weight:700;margin-bottom:.5rem;
-    background:linear-gradient(90deg,#00d4ff,#7c3aed);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+    padding:2rem 1rem 1rem;text-align:center;background:transparent}
   .hero p{font-size:1.15rem;color:#bdbdbd;margin-bottom:2rem;max-width:78ch;text-shadow:0 1px 6px rgba(0,0,0,.55)}
   .search-box{width:100%;max-width:1140px;background:rgba(255,255,255,.085);border:1px solid rgba(255,255,255,.16);
     border-radius:1rem;padding:1.2rem;-webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);box-shadow:0 8px 32px rgba(0,0,0,.3);
@@ -120,6 +163,18 @@
     border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
   @keyframes spin{to{transform:rotate(360deg)}}
   .err{color:#ffb3b3}
+  /* Auth and quota rejections get a glass card instead of the red .err line:
+     they carry a heading, an explanation and — for a signed-out visitor — a
+     sign-in button. They are not the user's mistake, so they do not take the red
+     treatment. Same glass recipe as .ai-panel, nothing new introduced. */
+  .errcard{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+    border-radius:.9rem;padding:1.1rem 1.3rem;margin-bottom:1rem;
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
+  .errcard h4{font-size:1rem;font-weight:700;color:#e8eef7;margin-bottom:.35rem}
+  .errcard p{font-size:.86rem;color:#bdbdbd;line-height:1.6}
+  /* Beats `.errcard p` on specificity, which a bare .fnote would not. */
+  .errcard p.fnote{font-size:.78rem;color:#888;margin-top:.5rem}
+  .errcard .auth-btn{margin-top:.9rem;padding:.5rem 1.2rem;font-size:.85rem}
   .nct-hint{color:#fbbf24;font-size:.9rem}
   /* "verify at source" link on every NCT ID */
   .nctl{color:#00d4ff;text-decoration:none}
@@ -191,10 +246,21 @@
     text-align:center;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:.9rem;
     -webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
   @media(max-width:768px){
-    .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:4.5rem}
-    .brand-bar{top:.5rem;left:.5rem;padding:.35rem .5rem;
+    .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:1.5rem}
+    body{padding-top:46px}
+    .brand-bar{padding:.45rem .7rem;gap:.4rem;
       -webkit-backdrop-filter:blur(11px);backdrop-filter:blur(11px)}
     .brand-word{font-size:.82rem}
+    .brand-app{font-size:.78rem}
+    /* The mark, the app name and the auth controls share one row on a phone, so
+       the auth side shrinks in step with the brand side. Both text runs ellipsis
+       (.brand-app and .auth-email each carry min-width:0), the buttons never do —
+       so the row narrows instead of pushing the page sideways. */
+    .auth-bar{gap:.35rem}
+    .auth-email{font-size:.7rem;max-width:30vw}
+    .auth-btn{font-size:.7rem;padding:.25rem .6rem}
+    .errcard{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem 1rem}
+    .errcard .auth-btn{font-size:.8rem;padding:.45rem 1rem}
     /* mobile: lighter blur + tighter padding on the glass panels */
     .search-box{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:.9rem;max-width:96%}
     .card{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:1.2rem}
@@ -208,23 +274,33 @@
 </head>
 <body>
 
-<a class="brand-bar" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
-  <svg class="brand-mark" viewBox="0 0 64 64" width="22" height="22" aria-hidden="true" focusable="false">
-    <g fill="currentColor">
-      <rect x="6.0" y="11.0" width="42.0" height="8.1" rx="3.7"/>
-      <rect x="11.3" y="24.0" width="31.3" height="8.1" rx="3.7"/>
-      <rect x="16.7" y="37.0" width="20.7" height="8.1" rx="3.7"/>
-      <rect x="22.0" y="50.0" width="10.0" height="8.1" rx="3.7"/>
-      <rect x="51" y="25.3" width="7" height="5.5" rx="2.75" opacity="0.55"/>
-      <rect x="51" y="38.3" width="7" height="5.5" rx="2.75" opacity="0.70"/>
-      <rect x="51" y="51.3" width="7" height="5.5" rx="2.75" opacity="0.88"/>
-    </g>
-  </svg>
-  <span class="brand-word">Pubvera</span>
-</a>
+<header class="brand-bar">
+  <a class="brand-link" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
+    <svg class="brand-mark" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+      <g fill="currentColor">
+        <rect x="2" y="15" width="3.5" height="6" rx="1.5" opacity="0.45"/>
+        <rect x="7.5" y="11" width="3.5" height="10" rx="1.5" opacity="0.65"/>
+        <rect x="13" y="7" width="3.5" height="14" rx="1.5" opacity="0.85"/>
+        <rect x="18.5" y="2" width="3.5" height="19" rx="1.5"/>
+      </g>
+    </svg>
+    <span class="brand-word">Pubvera</span>
+  </a>
+  <span class="brand-sep" aria-hidden="true">·</span>
+  <span class="brand-app">Trialvera</span>
+
+  <!-- AUTH BAR — stays hidden until /config.json returns a Supabase config.
+       Without one the page never loads Supabase and behaves exactly as it did
+       before sign-in existed: no sign-in UI, no Authorization header, and BYOK
+       untouched. Wired up by the module script at the end of this file. -->
+  <div class="auth-bar" id="authBar" hidden>
+    <span class="auth-email" id="authEmail" hidden></span>
+    <button type="button" class="auth-btn auth-btn-primary" id="authSignInBtn" hidden>Sign in with Google</button>
+    <button type="button" class="auth-btn" id="authSignOutBtn" hidden>Sign out</button>
+  </div>
+</header>
 
 <section class="hero">
-  <h1>🔬 Trialvera</h1>
   <p>Search, filter and analyse clinical trials — registry data from ClinicalTrials.gov, enriched with PubMed, OpenAlex &amp; FDA FAERS safety signals. Keyless and open, 30+ commands in six groups.</p>
   <div class="search-box">
     <input id="heroQuery" type="text" placeholder="Disease, drug, or NCT ID — e.g. 'diabetes' or 'NCT07437157'">
@@ -477,6 +553,101 @@ const REQ_MSG={nctid:"Please enter an NCT ID",drug:"Please enter a drug name",
   term:"Please enter a term",area:"Please enter a disease area",
   text:"Please enter your feedback"};
 
+// ═════════════════ Auth / quota layer in front of /api/* ═════════════════
+// TWO DIFFERENT CREDENTIALS are in play on this page and they must never be
+// conflated:
+//   Authorization: Bearer <supabase token>  — who the person is (this section)
+//   X-LLM-Key / X-LLM-Provider              — the user's own LLM key (BYOK)
+// The Supabase token is never written into X-LLM-Key, never logged, and never
+// reaches the child CLI. BYOK keeps working unchanged whether signed in or out.
+
+// Read at REQUEST time, never cached at page load: the Supabase client
+// refreshes the access token in the background, so a token captured once at
+// load would be an hour stale on a page left open. window.sb exists only when
+// /config.json returned a Supabase config (see the module script at the end of
+// this file) — without it the request goes out exactly as it did before sign-in
+// existed, with no Authorization header at all.
+async function authHeaders(){
+  if(!window.sb) return {};
+  try{
+    const {data:{session}}=await window.sb.auth.getSession();
+    if(session) return {"Authorization":"Bearer "+session.access_token};
+  }catch(e){/* no token: let the server decide — 401 is handled below */}
+  return {};
+}
+
+// Turns a non-2xx response into an Error carrying the status and the parsed
+// body, so the catch block can tell an auth or quota rejection from an ordinary
+// CLI failure (see errorHTML). The auth layer in front of the API is not
+// guaranteed to answer with JSON, so a body that will not parse must still
+// yield a status-bearing error with the message this page has always shown.
+async function httpError(r){
+  let text="";
+  try{text=await r.text();}catch(e){/* body unreadable */}
+  let d=null;
+  try{d=JSON.parse(text);}catch(e){/* plain text or empty */}
+  const e=new Error((d&&d.error)||("HTTP "+r.status));
+  e.status=r.status;e.data=d;
+  return e;
+}
+
+// Bridge to the module script at the end of this file: the sign-in button
+// inside a 401 error card is inline HTML, so it needs a global to call.
+function pubveraSignIn(){ if(window.pubveraAuth) window.pubveraAuth.signIn(); }
+
+// resets_at arrives as an ISO timestamp; show it in the reader's own locale and
+// fall back to the raw value when it is not a parseable date.
+function resetsAtText(v){
+  if(!v) return "";
+  const t=new Date(v);
+  return isNaN(t.getTime())?String(v)
+    :t.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"});
+}
+
+// Error markup for a failed command. 401/403/503 come from the auth and quota
+// layer in front of the API and each one means something different to the user;
+// every other failure keeps the previous behaviour — the red one-line .err card,
+// with the Clear button when the request actually reached a server.
+function errorHTML(e){
+  const st=e&&e.status, d=(e&&e.data)||{};
+  if(st===401){
+    // The raw error ("missing/invalid token") tells the user nothing they can
+    // act on, and the remedy is always the same, so it is not shown.
+    const btn=(window.pubveraAuth&&window.pubveraAuth.enabled)
+      ? '<button type="button" class="auth-btn auth-btn-primary" onclick="pubveraSignIn()">Sign in with Google</button>'
+      : "";
+    return '<div class="errcard"><h4>Sign-in required</h4>'+
+      '<p>Please sign in to run this analysis.</p>'+btn+'</div>';
+  }
+  if(st===403){
+    // A valid token that is not allowed through: either the plan does not
+    // include this app, or the period's quota is used up. Upgrading is the way
+    // out of both, but prices belong on the pricing page, not here.
+    if(String(d.reason||"")==="app_locked")
+      return '<div class="errcard"><h4>Not included in your plan</h4>'+
+        '<p>Trialvera is not part of your current plan. Upgrading your plan unlocks it.</p></div>';
+    let msg="You have used up the analyses included in your plan for this period.";
+    const resets=resetsAtText(d.resets_at);
+    if(resets) msg+=" Your quota resets on "+resets+".";
+    msg+=" Upgrading your plan raises the limit.";
+    return '<div class="errcard"><h4>Usage limit reached</h4><p>'+esc(msg)+'</p></div>';
+  }
+  if(st===503){
+    // Nothing the user did. Two different things answer 503 here — the quota
+    // service being unreachable, and this server's own CLI slots all being busy
+    // (runCLI in main.go) — so the server's own message is kept as a muted
+    // second line where there is one, while the card itself says plainly that
+    // the request was not rejected.
+    const why=String(d.error||"").trim();
+    return '<div class="errcard"><h4>Temporarily unavailable</h4>'+
+      '<p>Please try again in a moment — nothing is wrong with your request.</p>'+
+      (why?'<p class="fnote">'+esc(why)+'</p>':"")+'</div>';
+  }
+  const clear=st?'<button class="backbtn" onclick="document.getElementById(\'res\').innerHTML=\'\'">Clear</button>':"";
+  return '<div class="rcard"><h3 class="err">Error</h3><p>'+
+    esc(e&&e.message?e.message:"Unknown error")+'</p>'+clear+'</div>';
+}
+
 async function run(g,cmd){
   const d=GROUPS[g].cmds[cmd];
   const body={command:cmd};
@@ -518,17 +689,25 @@ async function run(g,cmd){
   res.innerHTML=`<div class="rcard"><span class="spin"></span> Running <b>${esc(cmd)}</b>…</div>`;
   const headers={"Content-Type":"application/json"};
   if(key){headers["X-LLM-Key"]=key;headers["X-LLM-Provider"]=$("#llmProvider").value;}
+  // Bearer token for the auth/quota layer, ADDED ALONGSIDE the BYOK headers
+  // above — never in place of them, and never inside X-LLM-Key. Read here, one
+  // line before the fetch, because getSession() may quietly refresh an expired
+  // token. Signed out, or with no Supabase config at all, this contributes
+  // nothing and the request goes out exactly as it always has.
+  Object.assign(headers,await authHeaders());
   try{
     const r=await fetch(API_BASE+"/api/"+g,{method:"POST",headers,body:JSON.stringify(body)});
+    // Status before body: the auth layer's 401/403/503 are not guaranteed to be
+    // JSON, and r.json() on a plain-text body throws away the status with it.
+    if(!r.ok) throw await httpError(r);
     const data=await r.json();
-    if(!r.ok){res.innerHTML=`<div class="rcard"><h3 class="err">Error</h3><p>${esc(data.error||("HTTP "+r.status))}</p><button class="backbtn" onclick="document.getElementById('res').innerHTML=''">Clear</button></div>`;return;}
     lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,
       query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
     res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" onclick="document.getElementById('res').innerHTML=''">Clear</button>`;
     initSortIndicators(res);
     registerView(cmd,domViewProvider(cmd));
     refreshQCount(res);
-  }catch(e){res.innerHTML=`<div class="rcard"><h3 class="err">Error</h3><p>${esc(e.message)}</p></div>`;}
+  }catch(e){res.innerHTML=errorHTML(e);}
 }
 
 // ---- renderers: a few specific shapes + a robust generic fallback ----
@@ -1121,6 +1300,79 @@ document.addEventListener("click",e=>{
   });
   rows.forEach(r=>tbody.appendChild(r));
 });
+</script>
+
+<!-- GOOGLE SIGN-IN (Supabase).
+     Module scope, so the classic script above reaches it through window.sb /
+     window.pubveraAuth. Config comes from /config.json (handleRoot in main.go).
+     When it is missing or incomplete — the state of a deployment whose
+     environment variables are not set — Supabase is never loaded at all and the
+     page runs unauthenticated: no sign-in UI, no Authorization header,
+     everything else unchanged, BYOK included. -->
+<script type="module">
+const bar     = document.getElementById('authBar');
+const emailEl = document.getElementById('authEmail');
+const inBtn   = document.getElementById('authSignInBtn');
+const outBtn  = document.getElementById('authSignOutBtn');
+
+// Installed first so run() and the 401 error card can always ask, even if the
+// config fetch or the module import below never completes.
+window.pubveraAuth = { enabled: false, signIn() {}, signOut() {} };
+
+async function initAuth() {
+  let cfg;
+  try {
+    const res = await fetch('/config.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    cfg = await res.json();
+  } catch (e) {
+    return; // unauthenticated mode
+  }
+  const url = String((cfg && cfg.supabase_url) || '').trim();
+  const key = String((cfg && cfg.supabase_anon_key) || '').trim();
+  // Either field empty: skip Supabase entirely.
+  if (!url || !key) return;
+
+  // Dynamic import, not a static one: a static import runs before the fetch
+  // above, so an unconfigured page would still pay for the library.
+  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+  const sb = createClient(url, key);
+  window.sb = sb;
+
+  window.pubveraAuth = {
+    enabled: true,
+    signIn: async () => {
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        // Back to the origin the user is actually on, so a sign-in started on
+        // trialvera.pubvera.com returns to trialvera.pubvera.com.
+        options: { redirectTo: window.location.origin }
+      });
+      if (error) alert('Sign-in failed: ' + error.message);
+    },
+    signOut: () => sb.auth.signOut()
+  };
+
+  inBtn.onclick  = () => window.pubveraAuth.signIn();
+  outBtn.onclick = () => window.pubveraAuth.signOut();
+
+  function render(session) {
+    const signedIn = !!session;
+    emailEl.textContent = signedIn ? (session.user && session.user.email || 'Signed in') : '';
+    emailEl.hidden = !signedIn;
+    outBtn.hidden  = !signedIn;
+    inBtn.hidden   = signedIn;
+    bar.hidden = false; // only now: an empty bar must never flash first
+  }
+
+  const { data: { session } } = await sb.auth.getSession();
+  render(session);
+  // Fires on sign-in, sign-out and background token refresh, including the
+  // redirect back from Google, which lands here as a new session.
+  sb.auth.onAuthStateChange((_event, s) => render(s));
+}
+
+initAuth().catch(() => { /* stay in unauthenticated mode */ });
 </script>
 </body>
 </html>

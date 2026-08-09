@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -246,6 +248,85 @@ func TestPhaseDistributionPassthrough(t *testing.T) {
 		if got := normalizePhaseDistribution(raw); !bytes.Equal(got, raw) {
 			t.Errorf("input %q must pass through byte-identical, got %q", raw, got)
 		}
+	}
+}
+
+// ---- /config.json (browser auth bootstrap) -----------------------------------
+
+// serveConfig runs handleRoot against /config.json with the two Supabase
+// variables set to the given values.
+func serveConfig(t *testing.T, url, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	t.Setenv("SUPABASE_URL", url)
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", key)
+	rec := httptest.NewRecorder()
+	handleRoot(rec, httptest.NewRequest(http.MethodGet, "/config.json", nil))
+	return rec
+}
+
+func decodeConfig(t *testing.T, rec *httptest.ResponseRecorder) browserConfig {
+	t.Helper()
+	var cfg browserConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("/config.json body is not valid JSON (%v): %s", err, rec.Body.String())
+	}
+	return cfg
+}
+
+func TestConfigJSONServesTheConfiguredPair(t *testing.T) {
+	rec := serveConfig(t, "https://proj.supabase.co", "sb_publishable_abc123")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	// A stale key surviving a key rotation would be hard to diagnose from the
+	// browser side, so the response must never be cached.
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	cfg := decodeConfig(t, rec)
+	if cfg.SupabaseURL != "https://proj.supabase.co" || cfg.SupabaseAnonKey != "sb_publishable_abc123" {
+		t.Errorf("config = %+v, want the configured pair", cfg)
+	}
+}
+
+// A missing or blank variable is not an error: an empty PAIR with status 200 is
+// the answer that puts the page into unauthenticated mode. Half a config would
+// be worse than none — the page would build a client it cannot use.
+func TestConfigJSONEmptyPairWhenUnset(t *testing.T) {
+	for _, tc := range []struct{ name, url, key string }{
+		{"both unset", "", ""},
+		{"key unset", "https://proj.supabase.co", ""},
+		{"url unset", "", "sb_publishable_abc123"},
+		{"both blank", "   ", "\t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serveConfig(t, tc.url, tc.key)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if cfg := decodeConfig(t, rec); cfg.SupabaseURL != "" || cfg.SupabaseAnonKey != "" {
+				t.Errorf("config = %+v, want both fields empty", cfg)
+			}
+		})
+	}
+}
+
+// handleRoot's "/" case falls through to "/healthz" when index.html cannot be
+// read, and Go's fallthrough goes to whichever case is NEXT IN SOURCE ORDER —
+// which is why /config.json sits above them both. This is the test that fails
+// if a later edit moves it in between.
+func TestRootFallbackSurvivesTheConfigCase(t *testing.T) {
+	t.Chdir(t.TempDir()) // no index.html to read here
+	rec := httptest.NewRecorder()
+	handleRoot(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != "ok" {
+		t.Errorf("body = %q, want %q — the fallthrough landed on the wrong case", got, "ok")
 	}
 }
 
