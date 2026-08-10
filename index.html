@@ -931,7 +931,8 @@ function trialExportRow(r){
     "Enrollment":(typeof r.enrollment==="number")?r.enrollment:(r.enrollment!=null&&r.enrollment!==""?Number(r.enrollment)||"":""),
     "Sponsor":r.sponsor||"",
     "Start date":r.start_date||"",
-    "Completion date":r.completion_date||r.primary_completion_date||"",
+    "Primary completion date":r.primary_completion_date||"",
+    "Completion date":r.completion_date||"",
     "Country":Array.isArray(r.countries)?r.countries.join("; "):(r.country||""),
     "URL":"https://clinicaltrials.gov/study/"+r.id};
   Object.entries(r).forEach(([k,v])=>{
