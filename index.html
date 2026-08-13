@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Trialvera — search, filter and analyse clinical trials. Registry data from ClinicalTrials.gov, keyless and open. Part of the Pubvera research suite.">
 <title>Trialvera — Clinical Trial Search &amp; Analysis</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230a0a12'/%3E%3Cg fill='%2300d4ff'%3E%3Crect x='2' y='15' width='3.5' height='6' rx='1.5' opacity='0.45'/%3E%3Crect x='7.5' y='11' width='3.5' height='10' rx='1.5' opacity='0.65'/%3E%3Crect x='13' y='7' width='3.5' height='14' rx='1.5' opacity='0.85'/%3E%3Crect x='18.5' y='2' width='3.5' height='19' rx='1.5'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a12'/%3E%3Cg fill='%2300d4ff'%3E%3Crect x='6' y='11' width='42' height='8.1' rx='3.7'/%3E%3Crect x='11.3' y='24' width='31.3' height='8.1' rx='3.7'/%3E%3Crect x='16.7' y='37' width='20.7' height='8.1' rx='3.7'/%3E%3Crect x='22' y='50' width='10' height='8.1' rx='3.7'/%3E%3Crect x='51' y='25.3' width='7' height='5.5' rx='2.75' opacity='0.55'/%3E%3Crect x='51' y='38.3' width='7' height='5.5' rx='2.75' opacity='0.70'/%3E%3Crect x='51' y='51.3' width='7' height='5.5' rx='2.75' opacity='0.88'/%3E%3C/g%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -13,8 +13,19 @@
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
     background:linear-gradient(135deg,#0a0a12 0%,#15152a 100%);color:#e0e0e0;line-height:1.6;min-height:100vh;
-    /* keeps content clear of the fixed .brand-bar */
-    padding-top:52px}
+    /* Clearance for the fixed .brand-bar, derived from the bar's own rules so it
+       tracks the bar in rem instead of freezing one measured pixel height: the
+       bar is sized in rem, so a px constant here would let the content slide
+       under it on a large-text browser. The terms: .6rem padding top and bottom,
+       the tallest child, and the 1px hairline. Candidates for tallest are
+       .brand-word's line box (.95rem font x 1.6 line-height), an .auth-btn
+       (.75rem text at line-height:1 + .3rem padding top and bottom + 1px border
+       top and bottom) and the 22px mark, which only wins below a ~14.5px root —
+       that is what max() is for. The trailing 1px is the one term NOT derived:
+       Chrome lays the bar out ~0.7px taller than the exact sum (line-box and
+       flex rounding), at every root from 12px to 32px, so it is rounded up from
+       that measurement to keep the clearance non-negative. */
+    padding-top:calc(1.2rem + max(1.52rem,1.35rem + 2px,22px) + 1px + 1px)}
   /* Colorful fixed backdrop so backdrop-filter blur on the glass panels has
      something visible to blur (a flat dark background makes blur a no-op). */
   body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
@@ -25,9 +36,10 @@
       radial-gradient(circle at 75% 75%,rgba(255,171,76,.20),transparent 55%),
       linear-gradient(135deg,#0a0a12 0%,#15152a 100%)}
 
-  /* BRAND BAR — Pubvera mark + wordmark (links back to the hub) followed by the
-     app name. The SVG is inlined rather than linked from pubvera.com so the app
-     does not depend on Cloudflare Pages being up, and so the mark can inherit
+  /* BRAND BAR — Pubvera mark + wordmark, linking back to the hub. The app's own
+     name is not repeated here; the page title and the heading below already say
+     which app this is. The SVG is inlined rather than linked from pubvera.com
+     so the app does not depend on Cloudflare Pages being up, and the mark inherits
      currentColor. Same glass treatment as the panels below. */
   .brand-bar{position:fixed;top:0;left:0;right:0;z-index:900;
     display:flex;align-items:center;gap:.55rem;padding:.6rem 1rem;min-width:0;
@@ -39,9 +51,6 @@
   .brand-mark{color:#00d4ff;flex-shrink:0}
   .brand-word{font-size:.95rem;font-weight:700;color:#e8eef7;letter-spacing:-.01em}
   .brand-link:hover .brand-word{color:#00d4ff}
-  .brand-sep{color:rgba(255,255,255,.25);flex-shrink:0}
-  .brand-app{font-size:.9rem;font-weight:600;color:#bdbdbd;letter-spacing:-.01em;
-    min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   /* AUTH BAR (Google sign-in) — the right-hand end of the brand bar, opposite
      the mark. Corpova, Bibliovera and Praxvera make this a SECOND fixed pill in
@@ -62,12 +71,12 @@
      part that gives way when the row runs out of room; the buttons stay whole. */
   .auth-email{font-size:.8rem;color:#cdd6ea;max-width:34vw;min-width:0;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* line-height:1 is load-bearing, not cosmetic: .brand-bar is position:fixed and
-     body clears it with a FIXED padding-top (52px / 46px), so anything that makes
-     the bar taller starts covering the page. A button's default line box is tall
-     enough to push the header past that budget on its own — pinned to 1, the pill
-     is no taller than the wordmark beside it and the header height is unchanged
-     by sign-in. Measured: +0.0px at every width tested, 320px to 1280px. */
+  /* line-height:1 is load-bearing, not cosmetic: it keeps the bar's height from
+     changing when someone signs in. A button's default line box is taller than
+     the wordmark beside it, so the bar would grow the moment the auth controls
+     appear; pinned to 1, the pill stays within the wordmark's line box and the
+     header height is unchanged by sign-in. Measured: +0.0px at every width
+     tested, 320px to 1280px. */
   .auth-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
     color:#cdd6ea;padding:.3rem .85rem;border-radius:999px;font-size:.75rem;font-weight:600;
     font-family:inherit;line-height:1;cursor:pointer;transition:.2s;white-space:nowrap;flex-shrink:0}
@@ -247,14 +256,18 @@
     -webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
   @media(max-width:768px){
     .bento{grid-template-columns:1fr}.hero{min-height:auto;padding-top:1.5rem}
-    body{padding-top:46px}
+    /* Same derivation with this breakpoint's numbers: .45rem padding top and
+       bottom, .brand-word at .82rem x 1.6 = 1.312rem, an .auth-btn at .7rem +
+       .25rem padding top and bottom + 1px border top and bottom, the 22px mark
+       (the winner at a 16px root), the 1px hairline, and the same 1px rounded up
+       from the measured layout slack explained above. */
+    body{padding-top:calc(.9rem + max(1.312rem,1.2rem + 2px,22px) + 1px + 1px)}
     .brand-bar{padding:.45rem .7rem;gap:.4rem;
       -webkit-backdrop-filter:blur(11px);backdrop-filter:blur(11px)}
     .brand-word{font-size:.82rem}
-    .brand-app{font-size:.78rem}
-    /* The mark, the app name and the auth controls share one row on a phone, so
-       the auth side shrinks in step with the brand side. Both text runs ellipsis
-       (.brand-app and .auth-email each carry min-width:0), the buttons never do —
+    /* The brand link and the auth controls share one row on a phone, so the auth
+       side shrinks to fit. The email is the only run that ellipsises (it carries
+       min-width:0, as does .auth-bar); the buttons and the brand link never do —
        so the row narrows instead of pushing the page sideways. */
     .auth-bar{gap:.35rem}
     .auth-email{font-size:.7rem;max-width:30vw}
@@ -276,18 +289,19 @@
 
 <header class="brand-bar">
   <a class="brand-link" href="https://pubvera.com" aria-label="Pubvera — back to all tools">
-    <svg class="brand-mark" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+    <svg class="brand-mark" viewBox="0 0 64 64" width="22" height="22" aria-hidden="true" focusable="false">
       <g fill="currentColor">
-        <rect x="2" y="15" width="3.5" height="6" rx="1.5" opacity="0.45"/>
-        <rect x="7.5" y="11" width="3.5" height="10" rx="1.5" opacity="0.65"/>
-        <rect x="13" y="7" width="3.5" height="14" rx="1.5" opacity="0.85"/>
-        <rect x="18.5" y="2" width="3.5" height="19" rx="1.5"/>
+        <rect x="6.0" y="11.0" width="42.0" height="8.1" rx="3.7"/>
+        <rect x="11.3" y="24.0" width="31.3" height="8.1" rx="3.7"/>
+        <rect x="16.7" y="37.0" width="20.7" height="8.1" rx="3.7"/>
+        <rect x="22.0" y="50.0" width="10.0" height="8.1" rx="3.7"/>
+        <rect x="51" y="25.3" width="7" height="5.5" rx="2.75" opacity="0.55"/>
+        <rect x="51" y="38.3" width="7" height="5.5" rx="2.75" opacity="0.70"/>
+        <rect x="51" y="51.3" width="7" height="5.5" rx="2.75" opacity="0.88"/>
       </g>
     </svg>
     <span class="brand-word">Pubvera</span>
   </a>
-  <span class="brand-sep" aria-hidden="true">·</span>
-  <span class="brand-app">Trialvera</span>
 
   <!-- AUTH BAR — stays hidden until /config.json returns a Supabase config.
        Without one the page never loads Supabase and behaves exactly as it did
