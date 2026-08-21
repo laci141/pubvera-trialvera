@@ -474,6 +474,14 @@ type openAIRequest struct {
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
+// anthropicMaxTokens caps the Anthropic completion. The synthesis schema is
+// fixed-size (summary + 3-5 key_points + caveats + not_advice) and does not
+// grow with the number of trials; measured output is ~436 tokens, so this
+// leaves roughly 4.7x headroom. Raised from 1024 because a truncated reply is
+// returned as HTTP 200 with stop_reason "max_tokens" and would otherwise fail
+// only later, as a confusing JSON parse error.
+const anthropicMaxTokens = 2048
+
 type anthropicRequest struct {
 	Model     string        `json:"model"`
 	MaxTokens int           `json:"max_tokens"`
@@ -535,7 +543,7 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	switch spec.Style {
 	case styleAnthropic:
 		url = spec.BaseURL + "/messages"
-		payload = anthropicRequest{Model: model, MaxTokens: 1024, Messages: []chatMessage{{Role: "user", Content: prompt}}}
+		payload = anthropicRequest{Model: model, MaxTokens: anthropicMaxTokens, Messages: []chatMessage{{Role: "user", Content: prompt}}}
 	default:
 		url = spec.BaseURL + "/chat/completions"
 		reqPayload := openAIRequest{Model: model, Messages: []chatMessage{{Role: "user", Content: prompt}}}
@@ -583,6 +591,13 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 			kind = llmFailRejected
 		}
 		return nil, newLLMError(kind, fmt.Sprintf("provider returned HTTP %d: %s", resp.StatusCode, sanitizeLLMError(string(respBody), key)))
+	}
+
+	if spec.Style == styleAnthropic && anthropicHitTokenLimit(respBody) {
+		// HTTP 200 but the model was cut off mid-sentence: parseSynthesis would
+		// report a JSON error and send the reader hunting for a parser bug.
+		return nil, newLLMError(llmFailUnparseable, sanitizeLLMError(
+			fmt.Sprintf("model response was cut off: it hit the %d-token output limit (stop_reason \"max_tokens\"); raise anthropicMaxTokens or shorten the prompt", anthropicMaxTokens), key))
 	}
 
 	text, err := extractChatText(spec.Style, respBody)
@@ -781,6 +796,20 @@ func groundSynthesis(syn *llmSynthesis, source []byte) {
 	}
 	note += " (unverified: " + list + ")."
 	syn.GroundingNote = note
+}
+
+// anthropicHitTokenLimit reports whether an Anthropic response was truncated
+// by the output token limit. The response structs elsewhere in this file do not
+// carry stop_reason, so it is decoded here on its own; a body that does not
+// parse is left to extractChatText to report.
+func anthropicHitTokenLimit(body []byte) bool {
+	var r struct {
+		StopReason string `json:"stop_reason"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return false
+	}
+	return r.StopReason == "max_tokens"
 }
 
 // extractChatText pulls the assistant text out of the provider response.

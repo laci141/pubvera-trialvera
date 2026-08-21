@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -509,5 +512,115 @@ func TestProviderRegistry(t *testing.T) {
 	}
 	if providers["anthropic"].Style != styleAnthropic {
 		t.Error("anthropic must use the Anthropic wire format")
+	}
+}
+
+// TestLLMSynthesizeStopReasonGuard covers the truncation guard end to end: the
+// provider registry is pointed at a stub that replays a canned body, so the
+// response shape — not the network — decides the outcome.
+func TestLLMSynthesizeStopReasonGuard(t *testing.T) {
+	const goodJSON = `{"summary":"Thirty recruiting trials were found.","key_points":["30 trials found","largest enrollment 149"],"caveats":["registry-only signal"],"not_advice":""}`
+
+	anthropicBody := func(stopReason, text string) string {
+		b, err := json.Marshal(map[string]any{
+			"stop_reason": stopReason,
+			"content":     []map[string]any{{"type": "text", "text": text}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	openAIBody := func(text string) string {
+		b, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": text}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	tests := []struct {
+		name     string
+		provider string
+		body     string
+		wantErr  string // substring; "" means success expected
+	}{
+		{
+			name:     "anthropic truncated by token limit",
+			provider: "anthropic",
+			// Cut mid-JSON, exactly as a max_tokens stop leaves it.
+			body:    anthropicBody("max_tokens", `{"summary":"Thirty recruiting tri`),
+			wantErr: "cut off",
+		},
+		{
+			name:     "anthropic truncated even when the JSON happens to parse",
+			provider: "anthropic",
+			body:     anthropicBody("max_tokens", goodJSON),
+			wantErr:  "cut off",
+		},
+		{
+			name:     "anthropic end_turn still succeeds",
+			provider: "anthropic",
+			body:     anthropicBody("end_turn", goodJSON),
+		},
+		{
+			name:     "anthropic unparseable without truncation keeps the parse error",
+			provider: "anthropic",
+			body:     anthropicBody("end_turn", "sorry, no JSON here"),
+			wantErr:  "unparseable synthesis",
+		},
+		{
+			name:     "openai-style path unaffected",
+			provider: "openai",
+			body:     openAIBody(goodJSON),
+		},
+		{
+			name:     "openai-style path ignores a stray stop_reason",
+			provider: "openai",
+			// An OpenAI-shaped body carrying the Anthropic field must not trip
+			// the guard: the guard is scoped to the Anthropic branch.
+			body: `{"stop_reason":"max_tokens","choices":[{"message":{"content":` + fmt.Sprintf("%q", goodJSON) + `}}]}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			spec := providers[tc.provider]
+			orig := spec
+			spec.BaseURL = srv.URL
+			providers[tc.provider] = spec
+			defer func() { providers[tc.provider] = orig }()
+
+			syn, err := llmSynthesize(context.Background(), tc.provider, "sk-test-key", "", "search", []string{"diabetes"}, []byte(`{"results":[]}`))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want success, got error: %v", err)
+				}
+				if syn == nil || syn.Summary == "" {
+					t.Fatalf("want a parsed synthesis, got %+v", syn)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want error containing %q, got success: %+v", tc.wantErr, syn)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %q", tc.wantErr, err.Error())
+			}
+			if kind := llmFailKindOf(err); kind != llmFailUnparseable {
+				t.Errorf("want kind %q, got %q", llmFailUnparseable, kind)
+			}
+			if strings.Contains(err.Error(), "sk-test-key") {
+				t.Errorf("error leaked the API key: %q", err.Error())
+			}
+		})
 	}
 }
