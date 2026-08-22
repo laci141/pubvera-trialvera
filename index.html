@@ -835,6 +835,19 @@ function cellText(v){
   if(typeof v==="object")return JSON.stringify(v);
   return String(v);
 }
+function statusBadge(s){
+  if(!s)return "";
+  const colors={RECRUITING:"#2fd6a6",NOT_YET_RECRUITING:"#7dd3fc",
+    COMPLETED:"#888",TERMINATED:"#ff6b6b",WITHDRAWN:"#ff6b6b",
+    UNKNOWN:"#aaa",ACTIVE_NOT_RECRUITING:"#ffab4c"};
+  const c=colors[s]||"#aaa";
+  return '<span style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55;border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600;white-space:nowrap">'+esc(s.replace(/_/g," "))+'</span>';
+}
+function resultsBadge(v){
+  return v===true
+    ?'<span style="background:#2fd6a634;color:#2fd6a6;border:1px solid #2fd6a655;border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600">&#10003; Results</span>'
+    :"";
+}
 function objTable(arr,main){
   if(!arr.length) return `<p style="color:#888">Empty.</p>`;
   if(typeof arr[0]!=="object") return `<ul class="li">`+arr.map(x=>`<li>${nctLink(x)||urlLink(x)||esc(x)}</li>`).join("")+`</ul>`;
@@ -845,7 +858,7 @@ function objTable(arr,main){
   const isMain=arr===main, shown=isMain?arr:arr.slice(0,25);
   // NOTE: truncate BEFORE esc() — slicing the escaped string could cut an
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
-  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td>${nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80))}</td>`).join("")}</tr>`).join("");
+  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td>${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
      ${arr.length>shown.length?`<p style="color:#888;font-size:.8rem">…and ${arr.length-shown.length} more</p>`:""}`;
 }
