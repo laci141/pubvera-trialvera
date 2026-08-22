@@ -743,11 +743,18 @@ func normalizeTrialPhase(raw []byte) []byte {
 		return raw
 	}
 	key := ""
-	if _, ok := obj["results"]; ok {
-		key = "results"
-	} else if _, ok := obj["rows"]; ok {
-		key = "rows"
-	} else {
+	for _, k := range trialListKeys {
+		if _, ok := obj[k]; ok {
+			key = k
+			break
+		}
+	}
+	if key == "" {
+		if _, ok := obj["rows"]; ok {
+			key = "rows"
+		}
+	}
+	if key == "" {
 		return raw
 	}
 	var list []json.RawMessage
