@@ -243,6 +243,8 @@
   .qfilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;
     padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px}
   .qfilter:focus{outline:none;border-color:var(--c)}
+  .phasefilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px 14px;color:#e8eef7;font-size:.78rem;cursor:pointer}
+  .phasefilter:focus{outline:none;border-color:var(--c)}
   .qcount{color:#7dd3fc;font-size:.78rem;font-weight:600;margin-left:6px}
   /* sortable result-table headers */
   th{cursor:pointer;user-select:none}
@@ -1254,6 +1256,7 @@ function metaRow(text,key,filename){
   return '<div class="meta-row"><span class="meta">'+esc(text)+'<span class="qcount"></span></span>'+
     '<span class="dl-group">'+
     '<input class="qfilter" type="text" placeholder="🔍 Filter results…">'+
+    '<select class="phasefilter" title="Filter by phase"><option value="">All phases</option><option value="EARLY_PHASE1">Early Phase 1</option><option value="PHASE1">Phase 1</option><option value="PHASE2">Phase 2</option><option value="PHASE3">Phase 3</option><option value="PHASE4">Phase 4</option><option value="NA">NA</option></select>'+
     '<button class="dl" title="BibTeX @misc citations (NCT-keyed)" onclick="downloadBibTeX(\''+key+'\',\''+bibName+'\')">⬇ BibTeX</button>'+
     '<button class="dl" onclick="downloadXLSX(\''+key+'\',\''+xlsxName+'\')">⬇ Excel</button>'+
     '<button class="dl" onclick="downloadCSV(\''+key+'\',\''+csvName+'\')">⬇ CSV</button>'+
@@ -1268,17 +1271,50 @@ function resultMetaRow(cmd){
   return metaRow((n?n+" rows":"1 result")+" · "+cmd,cmd,"trialvera-"+cmd+".json");
 }
 
-// ── Quick filter: one delegated handler; typing hides non-matching rows in
-// the surrounding results block and updates the "x / y rows" counter. ──
+// ── Filtering: the text box and the phase dropdown COMPOSE — a row is shown
+// only when it passes both. Both handlers call the same applyFilters(scope)
+// so neither can clobber the other's row.style.display. ──
+function phaseColIndex(table){
+  const ths=Array.from(table.querySelectorAll("thead th"));
+  return ths.findIndex(th=>th.textContent.trim().toLowerCase()==="phase");
+}
+
+function matchesPhase(row,phase,idx){
+  if(!phase)return true;
+  if(idx<0)return true;              // no Phase column here — nothing to filter on
+  const cell=row.cells?row.cells[idx]:null;
+  const val=cell?cell.textContent.trim():"";
+  return val===phase||(phase==="PHASE1"&&val==="EARLY_PHASE1");
+}
+
+function applyFilters(scope){
+  const qEl=scope.querySelector(".qfilter"),pEl=scope.querySelector(".phasefilter");
+  const q=qEl?qEl.value.trim().toLowerCase():"";
+  const phase=pEl?pEl.value:"";
+  const idxCache=new Map();
+  scope.querySelectorAll("table tbody tr, ul.li li").forEach(row=>{
+    const table=row.closest("table");
+    let idx=-1;
+    if(table){
+      if(!idxCache.has(table))idxCache.set(table,phaseColIndex(table));
+      idx=idxCache.get(table);
+    }
+    const okText=!q||row.textContent.toLowerCase().includes(q);
+    row.style.display=(okText&&matchesPhase(row,phase,idx))?"":"none";
+  });
+  refreshQCount(scope);
+}
+
 document.addEventListener("input",e=>{
   const el=e.target;
   if(!el.classList||!el.classList.contains("qfilter"))return;
-  const scope=el.closest(".results")||document;
-  const q=el.value.trim().toLowerCase();
-  scope.querySelectorAll("table tbody tr, ul.li li").forEach(row=>{
-    row.style.display=(!q||row.textContent.toLowerCase().includes(q))?"":"none";
-  });
-  refreshQCount(scope);
+  applyFilters(el.closest(".results")||document);
+});
+
+document.addEventListener("change",e=>{
+  const el=e.target;
+  if(!el.classList||!el.classList.contains("phasefilter"))return;
+  applyFilters(el.closest(".results")||document);
 });
 
 // The counter ALWAYS shows the final post-filter count ("7 / 100 rows") — it
