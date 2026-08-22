@@ -467,6 +467,10 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		// trials returned (the CLI skips phaseless trials and double-counts
 		// multi-phase ones). Pass-through when the shape doesn't apply.
 		result = normalizePhaseDistribution(result)
+		// Ensure every trial object carries a "phase" key, so Python/R
+		// consumers never hit a KeyError on phaseless (observational,
+		// technology) rows. Pass-through when the shape does not apply.
+		result = normalizeTrialPhase(result)
 	} else {
 		// Some commands (version, help) print plain text; wrap it so the
 		// response stays valid JSON instead of erroring.
@@ -728,6 +732,58 @@ type rankedEntry struct {
 // trialListKeys are the result keys that may hold the trial list a
 // phase_distribution was computed from.
 var trialListKeys = []string{"trials", "results"}
+
+// normalizeTrialPhase ensures every object in the "results" (or "rows") array
+// of raw carries a "phase" key. The CLI omits the key when the field is empty
+// (omitempty); callers in Python/R get a KeyError on those rows. Best-effort:
+// any parse failure returns raw unchanged.
+func normalizeTrialPhase(raw []byte) []byte {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	key := ""
+	if _, ok := obj["results"]; ok {
+		key = "results"
+	} else if _, ok := obj["rows"]; ok {
+		key = "rows"
+	} else {
+		return raw
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(obj[key], &list); err != nil {
+		return raw
+	}
+	changed := false
+	for i, item := range list {
+		var trial map[string]json.RawMessage
+		if err := json.Unmarshal(item, &trial); err != nil {
+			continue
+		}
+		if _, has := trial["phase"]; !has {
+			trial["phase"] = json.RawMessage(`""`)
+			b, err := json.Marshal(trial)
+			if err != nil {
+				continue
+			}
+			list[i] = b
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	newList, err := json.Marshal(list)
+	if err != nil {
+		return raw
+	}
+	obj[key] = newList
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
+}
 
 // normalizePhaseDistribution rebuilds obj.phase_distribution from the trial
 // list (top level and compare's drug_a/drug_b sub-objects). On ANY doubt —
