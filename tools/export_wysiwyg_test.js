@@ -70,6 +70,7 @@ const sandbox = {
       aoa_to_sheet: aoa => { xlsxCaptured.aoa = aoa; return { "!ref": "A1" }; },
       decode_range: () => ({ s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }),
       encode_cell: ({ r, c }) => "R" + r + "C" + c,
+      encode_range: ({ s, e }) => "R" + s.r + "C" + s.c + ":R" + e.r + "C" + e.c,
       book_new: () => ({}),
       book_append_sheet: () => {},
     },

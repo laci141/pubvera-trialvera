@@ -1060,6 +1060,9 @@ function exportHeader(key,rows){
   parts.push(ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key));
   if(d.query)parts.push('query: "'+d.query+'"');
   parts.push(total&&total!==shown?("showing "+shown+" of "+total+" rows"):(shown+" rows"));
+  // Corpus size actually retrieved from the registry, before the relevance
+  // gate removed anything. Stated even when nothing was filtered.
+  if(total)parts.push((total+(typeof r.filtered_count==="number"?r.filtered_count:0))+" retrieved");
   // Spell out the gate's removals: a reader months later must not mistake a
   // filtered export for everything the registry returned.
   if(typeof r.filtered_count==="number"&&r.filtered_count>0)
@@ -1108,6 +1111,12 @@ function downloadXLSX(key,filename){
     return (typeof v==="object")?JSON.stringify(v):v;
   })));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
+  // Filter row = the column header (row index 1); row 0 is the provenance
+  // caption and must stay outside the range.
+  ws['!autofilter']={ref:XLSX.utils.encode_range({
+    s:{r:1,c:0},
+    e:{r:aoa.length-1,c:cols.length-1}
+  })};
 
   // Measure each column: long free text goes left and wide, short values centre.
   const colInfo=cols.map(c=>{
@@ -1226,13 +1235,18 @@ function jsonExport(key){
   if(!d)return null;
   const v=exportRows(key);
   const total=(rowsFromLastData(key)||[]).length;
+  // Resolved before the envelope: `corpus` below is computed from it.
+  const r=(d.response&&typeof d.response.result==="object"&&d.response.result)||{};
   const meta={app:"Trialvera",
     analysis:ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key),
     query:d.query||"",filters:v.scope,
     rows_exported:v.raw.length,rows_total:total,
     source:"ClinicalTrials.gov",exported_at:new Date().toISOString()};
+  // How many trials the registry actually returned vs how many survived the
+  // relevance gate. Always emitted when rows_total is known, including at
+  // zero filtering: "retrieved 71, displayed 71" is itself a statement.
+  if(total)meta.corpus={retrieved:total+(r.filtered_count||0),displayed:v.raw.length};
   // Optional so the shape stays unchanged when nothing was filtered.
-  const r=(d.response&&typeof d.response.result==="object"&&d.response.result)||{};
   if(typeof r.filtered_count==="number"&&r.filtered_count>0)meta.filtered_count=r.filtered_count;
   if(!total)return {export:meta,response:d.response};
   return {export:meta,rows:v.raw};
