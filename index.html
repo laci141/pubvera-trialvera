@@ -341,7 +341,8 @@
           <option value="xai">xAI Grok</option>
         </optgroup>
       </select>
-      <input id="llmModel" type="text" placeholder="Model (optional)" autocomplete="off">
+      <input id="llmModel" type="text" placeholder="Model (optional)" autocomplete="off" list="llmModelOptions">
+      <datalist id="llmModelOptions"></datalist>
     </div>
     <div class="model-hint" id="modelHint"></div>
     <div class="keyhint">Your key is stored only in this browser (localStorage) and sent per-request via the <code>X-LLM-Key</code> header. Never logged or persisted server-side. With a key, an AI synthesis panel (summary · key points · caveats) is added on top of every result — informational only, not medical advice.</div>
@@ -470,6 +471,24 @@ const DEFAULT_MODELS={anthropic:"claude-haiku-4-5",openai:"gpt-5-mini",gemini:"g
 // Every known provider default — a model value in this set is NOT user-custom,
 // so switching providers may replace it with the new provider's default.
 const knownDefaults=new Set(Object.values(DEFAULT_MODELS).filter(Boolean));
+// Suggested models per provider, offered as a datalist on the Model field.
+// The field stays free text on purpose: openrouter routes to any hosted
+// model, so a closed dropdown would lock users out of most of it.
+const MODEL_CHOICES={
+  gemini:["gemini-3.7-flash","gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite"],
+  anthropic:["claude-haiku-4-5","claude-sonnet-4-6"]
+};
+// Rebuild the datalist for the current provider. A provider without a list
+// falls back to its single default, so the current value is never absent
+// from its own suggestions.
+function fillModelOptions(){
+  const dl=document.getElementById("llmModelOptions");
+  if(!dl)return;
+  const p=$("#llmProvider").value;
+  const list=MODEL_CHOICES[p]||[DEFAULT_MODELS[p]].filter(Boolean);
+  dl.innerHTML="";
+  list.forEach(id=>{const o=document.createElement("option");o.value=id;dl.appendChild(o);});
+}
 function updateModelHint(){
   const p=$("#llmProvider").value, hint=$("#modelHint"), model=$("#llmModel");
   if(p==="openrouter"){
@@ -494,9 +513,9 @@ function applyDefaultModel(){
   const p=localStorage.getItem("ct_provider");if(p)$("#llmProvider").value=p;
   const m=localStorage.getItem("ct_model");
   if(m)$("#llmModel").value=m;else applyDefaultModel();
-  updateModelHint();})();
+  updateModelHint();fillModelOptions();})();
 $("#llmKey").addEventListener("input",e=>localStorage.setItem("ct_key",e.target.value));
-$("#llmProvider").addEventListener("change",e=>{localStorage.setItem("ct_provider",e.target.value);applyDefaultModel();updateModelHint();});
+$("#llmProvider").addEventListener("change",e=>{localStorage.setItem("ct_provider",e.target.value);applyDefaultModel();updateModelHint();fillModelOptions();});
 $("#llmModel").addEventListener("input",e=>localStorage.setItem("ct_model",e.target.value));
 
 // ---- build bento ----
