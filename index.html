@@ -501,11 +501,17 @@ function updateModelHint(){
 }
 // Fill #llmModel with the current provider's default as a REAL editable value.
 // A user-custom model (non-empty and not a known default) is never clobbered.
+// The field is left EMPTY rather than prefilled with the provider default.
+// A datalist filters its suggestions against whatever the field already
+// holds, so prefilling "gemini-3.7-flash" hid the other three Gemini ids:
+// the models a user might switch to were the ones they could not see. The
+// default still applies server-side when the field is blank, and the
+// placeholder names it.
 function applyDefaultModel(){
   const model=$("#llmModel"), cur=model.value.trim();
   if(cur && !knownDefaults.has(cur)) return;
-  model.value=DEFAULT_MODELS[$("#llmProvider").value]||"";
-  localStorage.setItem("ct_model",model.value);
+  model.value="";
+  localStorage.setItem("ct_model","");
 }
 
 // ---- localStorage BYOK ----
