@@ -1184,9 +1184,21 @@ function downloadXLSX(key,filename){
     }
   }
   ws["!cols"]=colInfo.map(ci=>({wch:ci.wch}));
-  // Provenance row spans the full table width; data starts frozen below row 2.
+  // Provenance row spans the full table width.
   if(cols.length>1)ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:cols.length-1}}];
-  ws["!freeze"]={xSplit:0,ySplit:2};
+  // NO freeze pane, deliberately. xlsx-js-style cannot write one: measured on
+  // 1.2.0, "!freeze" (as an object or a string), "!views" with state:"frozen"
+  // and "!panes" all produce a file with no <pane> element at all. The string
+  // "!freeze" appears nowhere in the library, and its only occurrences of
+  // "pane" are an XLML *reader* case with an empty body. A line setting it
+  // therefore does nothing — and the comment that used to claim the header was
+  // frozen sent a later reader hunting a bug that did not exist, at a cost of
+  // about forty minutes. Writing a real pane means unzipping the finished
+  // xlsx, injecting <pane ySplit="2" .../> into sheet1.xml and rezipping:
+  // a browser zip library (JSZip, ~97KB on every page load) plus a regex
+  // against markup this library owns, which fails silently — or emits an
+  // unopenable file — the moment that markup shifts. Declined on that
+  // trade; the autofilter on the header row is the substitute.
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Trialvera");
   XLSX.writeFile(wb,filename);
