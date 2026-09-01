@@ -1259,11 +1259,27 @@ function analysisBibTeX(key,rows){
     "}\n";
 }
 
+// Factor-style results (risk, forecast, enrollment-check, timeline) expand one
+// trial into one row per factor, and since withParentIdentity copies the NCT id
+// onto every one of them, isTrialRow matched all five — so a risk export wrote
+// the SAME @misc entry five times under the SAME cite key. Duplicate keys are
+// not merely untidy: BibTeX rejects or warns on them, and Zotero and Mendeley
+// import the trial five times over. Measured in three separate .bib downloads
+// before this fix, and present since long before the parent-context change.
+// A citation's unit is the trial, so the BibTeX path — and only it — collapses
+// rows by NCT id. CSV, Excel and JSON keep every factor row: there the factors
+// ARE the data, and deduplicating them would throw four rows of it away.
 function bibExport(key){
   const v=exportRows(key);
   const total=(rowsFromLastData(key)||[]).length;
   if(total&&!v.raw.length)return null;           // everything filtered out
-  const trials=v.raw.filter(isTrialRow);
+  const seen=new Set(), trials=[];
+  v.raw.forEach(r=>{
+    if(!isTrialRow(r))return;
+    const id=String(r.id);
+    if(seen.has(id))return;
+    seen.add(id);trials.push(r);
+  });
   const cited=trials.length?trials:v.raw;
   const body=trials.length?toBibTeX(trials):analysisBibTeX(key,v.raw);
   return "% "+exportHeader(key,cited)+"\n\n"+body;
