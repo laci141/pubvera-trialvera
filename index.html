@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -946,9 +945,20 @@ function flatScalars(o){const out={};Object.entries(o||{}).forEach(([k,v])=>{
 // arrays already identify themselves and must not be touched.
 const FACTOR_KEYS=new Set(["factors","all_factors","primary_concerns"]);
 const IDENTITY_KEYS=["id","nct_id","title","score","level"];
+// Fields that describe the parent TRIAL rather than identify the record. Kept
+// in their own list because IDENTITY_KEYS means identifiers, and a reader who
+// finds "status" among them would reasonably fold the two together later.
+// Measured need: a risk export carried "status": "RECRUITING" and "sponsor":
+// "Chinese University of Hong Kong" in the response, but every factor row left
+// the Status and Sponsor columns blank — trialExportRow looks for r.status and
+// r.sponsor, and only what is copied here reaches it. sponsor_trials has no
+// TRIAL_COLS entry, so it is appended as its own column after the fixed ones.
+// Columns the risk response genuinely does not carry (conditions, dates,
+// country) stay empty on purpose: an empty cell there is true.
+const PARENT_CONTEXT_KEYS=["status","sponsor","sponsor_trials"];
 function withParentIdentity(parent,rows){
   const flat=flatScalars(parent),id={};
-  IDENTITY_KEYS.forEach(k=>{if(flat[k]!=null)id[k]=flat[k];});
+  IDENTITY_KEYS.concat(PARENT_CONTEXT_KEYS).forEach(k=>{if(flat[k]!=null)id[k]=flat[k];});
   if(!Object.keys(id).length)return rows;
   // The row's own value wins on a clash — it is the more specific one.
   return rows.map(row=>Object.assign({},id,row));
