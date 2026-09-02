@@ -4,9 +4,9 @@
 #
 # USAGE (from WEB_DIR, in Git Bash), monorepo on the feat/clinical-trials branch:
 #   ./vendor-cli.sh
-#   ./vendor-cli.sh "/c/Users/LACI/Desktop/printing-press-library/library/health/clinical-trials"
+#   ./vendor-cli.sh "/c/Users/LACI/printing-press-library/library/health/clinical-trials"
 set -euo pipefail
-CLI_SRC="${1:-/c/Users/LACI/Desktop/printing-press-library/library/health/clinical-trials}"
+CLI_SRC="${1:-/c/Users/LACI/printing-press-library/library/health/clinical-trials}"
 OUT="bin/clinical-trials-pp-cli-linux"
 if [ ! -f "$CLI_SRC/go.mod" ] || [ ! -d "$CLI_SRC/cmd" ]; then
   echo "ERROR: CLI source not found at: $CLI_SRC (check out the feat/clinical-trials branch)" >&2
@@ -19,4 +19,5 @@ cp -r "$CLI_SRC/cmd" "$CLI_SRC/internal" cli-src/
 echo "Cross-compiling -> $OUT"
 mkdir -p bin
 ( cd cli-src && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "../$OUT" ./cmd/clinical-trials-pp-cli )
-file "$OUT"; ls -la "$OUT"
+command -v file >/dev/null && file "$OUT" || true
+ls -la "$OUT"
