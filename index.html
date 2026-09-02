@@ -461,10 +461,23 @@ window.__fill=(id,v)=>{const el=document.getElementById(id);if(el){el.value=v;el
 window.__fillPair=(a,b)=>{const d1=document.getElementById("f_drug1"),d2=document.getElementById("f_drug2");
   if(d1)d1.value=a;if(d2)d2.value=b;};
 
+// GEMINI DEFAULT — measured 2026-09-02, not a preference. Same query ("obesity"
+// search) run through all three current flash models with a live key: 3.7-flash
+// answered HTTP 503 once ("model is currently experiencing high demand") and
+// then timed out twice with `context deadline exceeded`, at limit 10 and at
+// limit 99; 3.6-flash returned nothing; 3.5-flash succeeded, including at limit
+// 81 over 52 trials. The timeout is not ours to blame — llmTimeout in
+// providers.go is 60s inside a 120s request budget, and 3.5-flash finished a
+// LARGER corpus well inside it. Leaving 3.7-flash as the default meant every
+// user who left the model field blank got the one model that does not answer.
+// RE-MEASURE before reverting: this records Google's capacity on one day, and
+// a provider that fixes its throughput will make this line stale rather than
+// wrong. The datalist below is ordered to match, most reliable first.
+
 // Default model per provider (mirrors the server's registry) — shown as a
 // placeholder/hint; openrouter routes to any hosted model, so a model there
 // is effectively required.
-const DEFAULT_MODELS={anthropic:"claude-haiku-4-5",openai:"gpt-5-mini",gemini:"gemini-3.7-flash",
+const DEFAULT_MODELS={anthropic:"claude-haiku-4-5",openai:"gpt-5-mini",gemini:"gemini-3.5-flash",
   groq:"llama-3.3-70b-versatile",mistral:"mistral-small-latest",deepseek:"deepseek-chat",zai:"glm-5",
   moonshot:"kimi-k2.6",qwen:"qwen3-max",minimax:"MiniMax-M2.7",xai:"grok-4-fast",openrouter:"openrouter/free"};
 // Every known provider default — a model value in this set is NOT user-custom,
@@ -474,7 +487,7 @@ const knownDefaults=new Set(Object.values(DEFAULT_MODELS).filter(Boolean));
 // The field stays free text on purpose: openrouter routes to any hosted
 // model, so a closed dropdown would lock users out of most of it.
 const MODEL_CHOICES={
-  gemini:["gemini-3.7-flash","gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite"],
+  gemini:["gemini-3.5-flash","gemini-3.5-flash-lite","gemini-3.6-flash","gemini-3.7-flash"],
   anthropic:["claude-haiku-4-5","claude-sonnet-4-6"]
 };
 // Rebuild the datalist for the current provider. A provider without a list
