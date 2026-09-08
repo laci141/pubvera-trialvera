@@ -977,14 +977,75 @@ function withParentIdentity(parent,rows){
   return rows.map(row=>Object.assign({},id,row));
 }
 
+// A raw ClinicalTrials.gov study is a tree of modules — protocolSection,
+// resultsSection, derivedSection, documentSection, annotationSection — and the
+// export command hands them over untouched. Exported as-is, each becomes a JSON
+// blob in its own column, and a single resultsSection (measured: 37,099 and
+// 43,586 chars on a 10-row export) is on its own past Excel's 32,767-char cell
+// limit, so XLSX.writeFile throws and nothing downloads at all. BibTeX emits no
+// trials either, because isTrialRow reads r.id and a registry row keeps its NCT
+// at protocolSection.identificationModule.nctId.
+//
+// This maps one registry study onto the SAME flat shape the `search` path
+// already produces, so trialExportRow, TRIAL_COLS and isTrialRow work on it
+// unchanged. resultsSection is not information thrown away: it is what the
+// has_results boolean reports. Every nested read is guarded — a registry row may
+// omit any module.
+function flattenStudyRow(s){
+  const P=(s&&s.protocolSection)||{};
+  const idm=P.identificationModule||{},st=P.statusModule||{},des=P.designModule||{},
+        con=P.conditionsModule||{},arm=P.armsInterventionsModule||{},
+        spo=P.sponsorCollaboratorsModule||{},loc=P.contactsLocationsModule||{};
+  const phases=Array.isArray(des.phases)?des.phases.slice():[];
+  const out={
+    id:idm.nctId||"",
+    title:idm.briefTitle||"",
+    status:st.overallStatus||"",
+    phases:phases,
+    // phase is ALWAYS set, "" when the registry lists no phases, so a consumer
+    // iterating rows never hits the key on some rows and not others (the
+    // upstream CLI contract from printing-press-library #1957). Deliberately NOT
+    // "NA": on ClinicalTrials.gov "NA" means an interventional trial with no
+    // phase, while an absent phases array means an observational study — "NA"
+    // here would assert something the registry never said.
+    phase:phases.join(" / "),
+    has_results:!!(s&&s.hasResults)};
+  if(des.studyType)out.study_type=des.studyType;
+  if(Array.isArray(con.conditions)&&con.conditions.length)out.conditions=con.conditions.slice();
+  const ivs=(Array.isArray(arm.interventions)?arm.interventions:[])
+    .map(x=>x&&x.name).filter(Boolean);
+  if(ivs.length)out.interventions=ivs;
+  const count=(des.enrollmentInfo||{}).count;
+  if(typeof count==="number")out.enrollment=count;
+  const sponsor=(spo.leadSponsor||{}).name;
+  if(sponsor)out.sponsor=sponsor;
+  const sd=(st.startDateStruct||{}).date;              if(sd) out.start_date=sd;
+  const pcd=(st.primaryCompletionDateStruct||{}).date;  if(pcd)out.primary_completion_date=pcd;
+  const cd=(st.completionDateStruct||{}).date;          if(cd) out.completion_date=cd;
+  const countries=[];
+  (Array.isArray(loc.locations)?loc.locations:[]).forEach(l=>{
+    const c=l&&l.country;
+    if(c&&countries.indexOf(c)<0)countries.push(c);});
+  if(countries.length)out.countries=countries;
+  return out;
+}
+
+// Registry studies are recognised by the shape of the first element, not by the
+// key that held the array: /studies calls it "studies", other endpoints do not.
+function flattenStudies(a){
+  const f=a[0];
+  return (f&&typeof f==="object"&&f.protocolSection&&typeof f.protocolSection==="object")
+    ? a.map(flattenStudyRow) : a;
+}
+
 // Pull the main row array out of a command result. compare gets its two drug
 // cards as two flattened rows; otherwise the first array-of-objects wins.
 function extractRows(r){
   if(r==null||typeof r!=="object")return null;
   if(r.drug_a&&r.drug_b)return [flatScalars(r.drug_a),flatScalars(r.drug_b)];
   for(const k of ROW_KEYS){const v=r[k];if(Array.isArray(v)&&v.length&&typeof v[0]==="object")
-    return FACTOR_KEYS.has(k)?withParentIdentity(r,v):v;}
-  for(const v of Object.values(r)){if(Array.isArray(v)&&v.length&&typeof v[0]==="object")return v;}
+    return FACTOR_KEYS.has(k)?withParentIdentity(r,v):flattenStudies(v);}
+  for(const v of Object.values(r)){if(Array.isArray(v)&&v.length&&typeof v[0]==="object")return flattenStudies(v);}
   return null;
 }
 
@@ -1150,14 +1211,23 @@ function downloadXLSX(key,filename){
   if(!rows.length){alert(EMPTY_EXPORT_MSG);return;}
   const cols=[];
   rows.forEach(r=>Object.keys(r||{}).forEach(k=>{if(!cols.includes(k))cols.push(k);}));
+  // Excel refuses any cell over 32,767 characters: XLSX.writeFile throws and
+  // NOTHING downloads — the worst failure mode there is, because the user sees
+  // no file and no error and cannot tell what went wrong. After flattenStudyRow
+  // no studies cell comes close, but a long eligibilityCriteria on some other
+  // command would fail the same silent way, so every cell is clamped as a
+  // backstop. A truncated cell is a far better outcome than no file.
+  const EXCEL_CELL_LIMIT=32767;
+  const clamp=v=>(typeof v==="string"&&v.length>EXCEL_CELL_LIMIT)
+    ? v.slice(0,EXCEL_CELL_LIMIT-20)+" …[truncated]" : v;
   // Row 0 = provenance header ("showing 7 of 100"), row 1 = column header.
   const aoa=[[exportHeader(key,rows)],cols].concat(rows.map(r=>cols.map(c=>{
     const v=r?r[c]:"";
     if(v===null||v===undefined)return "";
     if(v===true)return "Yes";
     if(v===false)return "No";
-    if(Array.isArray(v))return v.map(x=>(typeof x==="object")?JSON.stringify(x):String(x)).join("; ");
-    return (typeof v==="object")?JSON.stringify(v):v;
+    if(Array.isArray(v))return clamp(v.map(x=>(typeof x==="object")?JSON.stringify(x):String(x)).join("; "));
+    return clamp((typeof v==="object")?JSON.stringify(v):v);
   })));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   // Filter row = the column header (row index 1); row 0 is the provenance
