@@ -826,7 +826,7 @@ function renderBody(r,main){
   const arr=r.results||r.trials||r.sources||null;
   if(Array.isArray(arr)) return `<div class="rcard">${scalarChips(r)}${filteredNote(r)}${objTable(arr,main)}</div>`;
   // generic object
-  return `<div class="rcard">${scalarChips(r)}${nestedArrays(r,main)}${rawDetails(r)}</div>`;
+  return `<div class="rcard">${scalarChips(r)}${nestedArrays(r,main)}${phaseNote(r)}${rawDetails(r)}</div>`;
 }
 
 // Relevance-filter transparency: when the server's gate hid off-topic trials
@@ -846,7 +846,7 @@ function filteredNote(r){
 // export path already recognises that shape via labelCountPair; the same
 // detector decides what to render here, so screen and export agree.
 function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x.drug||x.normalized_name||x.query||"—")}</h3>
-  ${scalarChips(x)}${breakdowns(x)}${sampleNote(x)}</div>`;}
+    ${scalarChips(x)}${breakdowns(x)}${sampleNote(x)}${phaseNote(x)}</div>`;}
 function breakdowns(o){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length&&labelCountPair(v))
     .map(([k,v])=>{const [lk,ck]=labelCountPair(v);
       const h=k.replace(/_/g," "),head=h.charAt(0).toUpperCase()+h.slice(1);
@@ -860,6 +860,39 @@ function breakdowns(o){return Object.entries(o).filter(([k,v])=>Array.isArray(v)
 function sampleNote(o){const s=o.sample_size,t=o.total_trials;
   if(typeof s!=="number"||typeof t!=="number"||!(s<t))return"";
   return `<p class="sample-note">Breakdown counts come from the ${s} trials actually sampled for this comparison, not from all ${t} known trials.</p>`;}
+// phase_distribution counts PHASE ENTRIES, not trials: a trial posted under
+// PHASE1 and PHASE2 lands in both buckets, and a trial with no phase lands in
+// N/A. Measured on a live compare after upstream #1971: 300 trials sampled,
+// buckets summing to 311 (10 trials with no phase, 89 with one, 6 with two).
+// The surplus is correct — a two-phase trial really does run in both — but
+// nothing on screen said so, and a reader seeing 311 beside 300 reads it as
+// arithmetic gone wrong.
+//
+// Silent when the two agree: there is nothing to explain then, and a note that
+// always fires is a note nobody reads. Unlike sampleNote, which fires only
+// when the sample is SMALLER than the total, this fires on ANY difference — a
+// deficit would mean something else is broken and must not be hidden either.
+//
+// Uses labelCountPair rather than a hardcoded count key, so this note, the
+// breakdown render and the export all read the shape the same way and cannot
+// drift apart if the CLI renames the field.
+function phaseNote(o){
+  const d=o&&o.phase_distribution,s=o&&o.sample_size;
+  if(!Array.isArray(d)||!d.length||typeof s!=="number"||s<=0)return"";
+  const pair=labelCountPair(d);
+  if(!pair)return"";
+  const total=d.reduce((n,e)=>n+(Number(e[pair[1]])||0),0);
+  if(!Number.isFinite(total)||total===s)return"";
+  // Direction decides the explanation. A SURPLUS is expected and correct: a
+  // trial posted under PHASE1 and PHASE2 lands in both buckets. A DEFICIT is
+  // not — every sampled trial should reach a bucket, phaseless ones landing in
+  // N/A since upstream #1971 — so it means trials went uncounted, and the note
+  // must say that instead of explaining a surplus that is not on screen.
+     const note=total>s
+    ? `so a trial listed under two phases appears in both, and a trial with no phase is counted under N/A`
+    : `so every sampled trial should reach a bucket — a total below the sample size means some trials were not counted, which usually indicates an outdated CLI binary`;
+  return `<p class="sample-note">The ${d.length} phase counts total ${total} across the ${s} trials sampled: phases are counted per entry, not per trial, ${note}.</p>`;
+}
 function factorList(f,main){if(!Array.isArray(f)||!f.length)return"";
   const tag=i=>f===main?` data-ri="${i}"`:"";
   return `<ul class="li" style="margin-top:.6rem">`+f.map((x,i)=>`<li${tag(i)}>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
