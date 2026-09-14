@@ -20,7 +20,11 @@ COPY bin/clinical-trials-pp-cli-linux ./bin/clinical-trials-pp-cli
 COPY index.html ./index.html
 RUN chmod +x ./bin/clinical-trials-pp-cli
 ENV CLI_BIN=/app/bin/clinical-trials-pp-cli
-# Server binds 0.0.0.0:$PORT when Render sets $PORT; locally defaults to :8091.
+# The server binds 127.0.0.1:8091 unless ADDR or PORT says otherwise. It runs on
+# the Hetzner box (pubvera-01) behind Caddy, which terminates HTTPS and applies
+# forward_auth — see the pubvera-infra repo. The comment here used to say Render
+# sets $PORT; that was true before the move and is not now, and render.yaml,
+# deleted alongside this edit, claimed the same thing.
 EXPOSE 8091
 USER app
 CMD ["./server"]
