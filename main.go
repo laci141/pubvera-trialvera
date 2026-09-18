@@ -196,6 +196,35 @@ func optArg(v string) []string {
 	return []string{}
 }
 
+// requestBudget is the whole-request deadline a CLI-backed endpoint gets. It
+// covers the child CLI run AND the optional LLM synthesis, which derives its
+// own narrower llmTimeout from this context rather than starting a fresh one.
+// It was written inline at the call site; naming it here is what lets
+// srvWriteTimeout below be derived from it rather than guessed.
+const requestBudget = 120 * time.Second
+
+// Server-side timeouts. ReadHeaderTimeout was the only one set, which left the
+// request BODY with no deadline at all: a size limit is not a time limit, and a
+// client that sends its body one byte per minute holds a handler goroutine for
+// as long as it likes. Caddy fronts this app in production and sets no request
+// timeout of its own, so this is the only place the limit exists.
+//
+// WriteTimeout is the one that must not be guessed. It covers the whole
+// response, and a request is allowed requestBudget to produce it, so anything
+// at or below that would cut off legitimate slow analyses rather than attacks
+// — and only the slowest ones, intermittently, which is far harder to diagnose
+// than the exposure being closed.
+const (
+	srvReadHeaderTimeout = 10 * time.Second
+	// The body is a small JSON object. Thirty seconds is far more than a real
+	// client needs and far less than a slow-loris attacker wants.
+	srvReadTimeout = 30 * time.Second
+	// The full request budget plus room to write the response.
+	srvWriteTimeout = requestBudget + 30*time.Second
+	// Keep-alive connections that go quiet are released rather than held.
+	srvIdleTimeout = 120 * time.Second
+)
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleRoot)
@@ -210,7 +239,14 @@ func main() {
 	} else if p := strings.TrimSpace(os.Getenv("PORT")); p != "" {
 		addr = "0.0.0.0:" + p
 	}
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: srvReadHeaderTimeout,
+		ReadTimeout:       srvReadTimeout,
+		WriteTimeout:      srvWriteTimeout,
+		IdleTimeout:       srvIdleTimeout,
+	}
 	log.Printf("clinical-trials-web listening on %s (CLI: %s, slots=%d)", addr, cliBinaryPath(), cliSem.capacity())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server error: %v", err)
@@ -418,7 +454,7 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 	}
 	defer cliSem.release()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), requestBudget)
 	defer cancel()
 
 	// #nosec G204 -- args are a fixed subcommand plus user text as discrete argv
