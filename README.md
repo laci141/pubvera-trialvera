@@ -17,7 +17,7 @@ A thin Go web wrapper around the [clinical-trials CLI](https://github.com/mvanho
 - [`main.go`](main.go) — HTTP server, one endpoint per command group (`/api/search-discovery`, `/api/trial-analysis`, `/api/comparison`, `/api/recruiting-watch`, `/api/data-management`, `/api/system`), CLI exec via `runCLI`, relevance gate, CORS
 - [`providers.go`](providers.go) — the 12-provider BYOK registry (OpenAI + Anthropic wire formats), prompt building, JSON compaction, error redaction
 - [`index.html`](index.html) — single-file glass-panel UI (Bento grid, modals, AI synthesis panel)
-- [`vendor-cli.sh`](vendor-cli.sh) — vendors the CLI source; prebuilt Linux binary in `bin/` ships in the image
+- The CLI is built inside the image from one pinned upstream printing-press-library commit (`ARG PP_LIBRARY_COMMIT` in the Dockerfile) and stamped on the image as the label `org.pubvera.cli.commit`; no prebuilt binary is committed
 - [`Dockerfile`](Dockerfile) — multi-stage build; [`render.yaml`](render.yaml) — [Render](https://render.com) deploy
 
 The CLI itself is purely heuristic and keyless — **all** LLM work happens in the web layer as a post-processing step over the CLI's JSON.
