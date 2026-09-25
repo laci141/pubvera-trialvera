@@ -37,7 +37,6 @@ RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=web-builder /out/server ./server
 COPY --from=cli-builder /go/bin/clinical-trials-pp-cli ./bin/clinical-trials-pp-cli
-COPY bin/clinical-trials-pp-cli-linux ./mutation-check
 COPY index.html ./index.html
 RUN chmod +x ./bin/clinical-trials-pp-cli
 
