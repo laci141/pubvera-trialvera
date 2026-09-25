@@ -42,6 +42,7 @@ COPY index.html ./index.html
 RUN chmod +x ./bin/clinical-trials-pp-cli
 
 # The upstream commit the CLI was built from, readable with docker inspect.
+ARG PP_LIBRARY_COMMIT
 LABEL org.pubvera.cli.commit=${PP_LIBRARY_COMMIT}
 
 ENV CLI_BIN=/app/bin/clinical-trials-pp-cli
