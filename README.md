@@ -2,7 +2,7 @@
 
 A thin Go web wrapper around the [clinical-trials CLI](https://github.com/mvanhorn/printing-press-library): search, analyze, compare and monitor clinical trials across ClinicalTrials.gov, PubMed, OpenAlex and the FAERS safety database — with optional bring-your-own-key AI synthesis on top.
 
-**Live instance:** [pubvera-trialvera.onrender.com](https://pubvera-trialvera.onrender.com)
+**Live instance:** [trialvera.pubvera.com](https://trialvera.pubvera.com) — the page is public; running a query needs a Pubvera sign-in
 
 ## Features
 
@@ -18,7 +18,7 @@ A thin Go web wrapper around the [clinical-trials CLI](https://github.com/mvanho
 - [`providers.go`](providers.go) — the 12-provider BYOK registry (OpenAI + Anthropic wire formats), prompt building, JSON compaction, error redaction
 - [`index.html`](index.html) — single-file glass-panel UI (Bento grid, modals, AI synthesis panel)
 - The CLI is built inside the image from one pinned upstream printing-press-library commit (`ARG PP_LIBRARY_COMMIT` in the Dockerfile) and stamped on the image as the label `org.pubvera.cli.commit`; no prebuilt binary is committed
-- [`Dockerfile`](Dockerfile) — multi-stage build; [`render.yaml`](render.yaml) — [Render](https://render.com) deploy
+- [`Dockerfile`](Dockerfile) — multi-stage build; [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) — CI gates, then the image is pushed to GHCR
 
 The CLI itself is purely heuristic and keyless — **all** LLM work happens in the web layer as a post-processing step over the CLI's JSON.
 
@@ -31,7 +31,7 @@ go build ./... && go run .
 # Docker
 docker build -t ctw . && docker run -p 8091:8091 ctw
 
-# Render: push to main — auto-deploys
+# Production: push to main — CI builds the image, Watchtower deploys it on pubvera-01
 ```
 
 ## Usage examples
@@ -68,7 +68,7 @@ The BYOK key travels in the `X-LLM-Key` request header, lives in memory for one 
 
 ## Development
 
-- Git: single `main` branch; Render auto-deploys on push
+- Git: single `main` branch; CI pushes the image to GHCR and Watchtower deploys it within about 5 minutes
 - Tests: `go test ./...` — 18 tests, no network (7 relevance-gate tests in [`main_test.go`](main_test.go), 11 LLM-layer tests in [`providers_test.go`](providers_test.go))
 - `go build ./...` and `go vet ./...` clean; do not run `gofmt -w` on Windows checkouts (CRLF)
 
