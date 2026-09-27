@@ -197,7 +197,7 @@
   /* inline empty-field validation message */
   .ferr{color:#ff8080;font-size:.8rem;margin-top:.3rem}
   /* fixed-column chip grid: exactly 2 tidy rows of equal-width pills */
-  .trygrid{display:grid;gap:.4rem;flex:1 1 100%;width:100%}
+  .trygrid{display:grid;gap:.4rem;flex:1 1 100%;width:100%;grid-template-columns:repeat(var(--cols,1),1fr)}
   .trygrid .chip.ex{width:100%;text-align:center}
   /* muted note under a select (e.g. export's single "studies" resource) */
   .fnote{font-size:.78rem;color:#888;margin-top:.3rem}
@@ -283,6 +283,10 @@
     .filtered-section{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
     .legal{-webkit-backdrop-filter:blur(11px);backdrop-filter:blur(11px);padding:.8rem 1rem;margin:0 .8rem 1.5rem}
     .modal-content{padding:1.1rem}
+    /* 1fr cannot shrink below a chip's text, so the fixed 5-6 column
+       example grid overflowed a phone-width modal. Here: as many columns
+       as fit. Desktop keeps the fixed --cols count from EX_COLS. */
+    .trygrid{grid-template-columns:repeat(auto-fill,minmax(6.5rem,1fr))}
     .meta-row{flex-direction:column;align-items:flex-start}
   }
 </style>
@@ -579,7 +583,7 @@ function renderFields(g,cmd){
   const descEl=$("#cmdDesc"); if(descEl) descEl.textContent=d.desc||"";
   const tryRow=(id,ex,cols)=>{
     const chips=ex.map(x=>`<button type="button" class="chip ex" onclick="__fill('${id}',this.textContent)">${esc(x)}</button>`).join("");
-    return cols?`<div class="tryrow">Try:<div class="trygrid" style="grid-template-columns:repeat(${cols},1fr)">${chips}</div></div>`
+    return cols?`<div class="tryrow">Try:<div class="trygrid" style="--cols:${cols}">${chips}</div></div>`
                :`<div class="tryrow">Try:${chips}</div>`;
   };
   box.innerHTML=d.fields.map(f=>{
