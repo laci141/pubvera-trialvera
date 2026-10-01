@@ -1490,7 +1490,9 @@ function resultMetaRow(cmd){
 // so neither can clobber the other's row.style.display. ──
 function phaseColIndex(table){
   const ths=Array.from(table.querySelectorAll("thead th"));
-  return ths.findIndex(th=>th.textContent.trim().toLowerCase()==="phase");
+  // initSortIndicators appends " ⇅" (↑/↓ once sorted) to every header: strip
+  // it, as the sort handler and the export provenance do.
+  return ths.findIndex(th=>th.textContent.replace(/[⇅↑↓]/g,"").trim().toLowerCase()==="phase");
 }
 
 function matchesPhase(row,phase,idx){

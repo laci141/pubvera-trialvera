@@ -107,5 +107,41 @@ check("JSON export.filters records the phase filter",
 phaseValue = "";
 check("no phase filter → not in provenance", S.exportRows("search").scope.includes("phase:"), false);
 
+// ── 3: the real filter path finds the Phase column behind its sort arrow ──
+// initSortIndicators appends " ⇅" to every header, so phaseColIndex compared
+// "phase ⇅" with "phase", returned -1 and the filter showed 126 / 126 rows.
+const filterStart = html.indexOf("function phaseColIndex(");
+const filterEnd = html.indexOf("\ndocument.addEventListener(\"input\"");
+const countStart = html.indexOf("function refreshQCount(");
+const countEnd = html.indexOf("\n// ── Sortable columns");
+if (filterStart < 0 || filterEnd <= filterStart || countStart < 0 || countEnd <= countStart) {
+  console.error("FAIL: could not locate the filter functions in index.html");
+  process.exit(1);
+}
+const filterSandbox = { __expose: {} };
+vm.runInNewContext(html.slice(filterStart, filterEnd) + "\n" + html.slice(countStart, countEnd) +
+  "\n__expose.phaseColIndex=phaseColIndex;__expose.applyFilters=applyFilters;",
+  filterSandbox, { filename: "filters.js" });
+const F = filterSandbox.__expose;
+const headers = ["id", "title", "status", "phase ⇅"].map(t => ({ textContent: t }));
+const table = { querySelectorAll: sel => (sel === "thead th" ? headers : []) };
+check("phaseColIndex behind the sort arrow", F.phaseColIndex(table), 3);
+
+const rows = ["PHASE1", "PHASE2", "NA"].map((p, i) => ({
+  cells: ["NCT0000000" + i, "t", "RECRUITING", p].map(t => ({ textContent: t })),
+  textContent: "NCT0000000" + i + " t RECRUITING " + p,
+  style: { display: "" },
+  closest: sel => (sel === "table" ? table : null),
+}));
+const qcount = { textContent: "" };
+const filterScope = {
+  querySelector: sel => (sel === ".qfilter" ? { value: "" } : sel === ".phasefilter" ? { value: "PHASE1" }
+    : sel === ".qcount" ? qcount : null),
+  querySelectorAll: sel => (sel === "[data-ri]" || sel === "table tbody tr, ul.li li" ? rows : []),
+};
+F.applyFilters(filterScope);
+check("PHASE1 filter leaves 1 of 3 rows visible", rows.filter(r => r.style.display !== "none").length, 1);
+check("counter after PHASE1 filter", qcount.textContent, " · 1 / 3 rows");
+
 console.log(failed ? "\n" + failed + " CHECK(S) FAILED" : "\nALL CHECKS PASSED");
 process.exit(failed ? 1 : 0);
