@@ -265,6 +265,24 @@ func main() {
 type browserConfig struct {
 	SupabaseURL     string `json:"supabase_url"`
 	SupabaseAnonKey string `json:"supabase_anon_key"`
+	// Providers carries the model registry (providers.go) so the page never
+	// keeps its own copy of the defaults. Public data: model names only.
+	Providers map[string]browserProvider `json:"providers"`
+}
+
+type browserProvider struct {
+	DefaultModel string   `json:"default_model"`
+	Models       []string `json:"models"`
+}
+
+// browserProviders is the page's view of the registry. Built per request: it
+// is a dozen entries, and a cached copy is one more thing that could drift.
+func browserProviders() map[string]browserProvider {
+	out := make(map[string]browserProvider, len(providers))
+	for name, spec := range providers {
+		out[name] = browserProvider{DefaultModel: spec.DefaultModel, Models: spec.Models}
+	}
+	return out
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +310,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		// Never cache: a stale key surviving a key rotation would be hard to
 		// diagnose from the browser side.
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey})
+		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey, Providers: browserProviders()})
 	case "/", "/index.html":
 		if data, err := os.ReadFile("index.html"); err == nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -44,37 +44,74 @@ const (
 	styleAnthropic                  // POST {base}/messages, x-api-key + anthropic-version
 )
 
+// verification records how a provider's model IDs were last checked.
+type verification string
+
+const (
+	verifiedLive         verification = "live"            // 3/3 live minimal requests succeeded
+	verifiedDocs         verification = "docs-verified"   // ID read from the provider's official docs
+	verifiedNotRechecked verification = "not re-verified" // carried over unchecked
+)
+
 // providerSpec describes one BYOK provider. BaseURL is the API root WITHOUT
 // the /chat/completions (or /messages) suffix; DefaultModel is used when the
 // caller sends no model override.
 type providerSpec struct {
 	BaseURL      string
 	DefaultModel string
-	Style        authStyle
+	// Models are the suggestions the page offers, most recommended first.
+	// The field stays free text, so this is a hint list, not an allow-list.
+	Models []string
+	Style  authStyle
 	// JSONFormat requests JSON-object output via the OpenAI-wire
 	// response_format parameter. Only meaningful for styleOpenAI providers;
 	// enabled only where the endpoint is known to accept it (openrouter).
 	JSONFormat bool
+	Verified   verification
 }
 
-// providers is the full BYOK registry. Everything except anthropic speaks the
-// OpenAI chat-completions format; gemini via Google's OpenAI-compatibility
-// endpoint, qwen via DashScope's international compatible-mode endpoint.
-// openrouter is a meta-provider: its model string selects any hosted model
-// (including :free ones), so the UI treats model as effectively required there.
+// providers is the full BYOK registry and the ONLY place model IDs live: the
+// page reads defaults and suggestions from /config.json (see browserConfig).
+// Everything except anthropic speaks the OpenAI chat-completions format; gemini
+// via Google's OpenAI-compatibility endpoint, qwen via DashScope's international
+// compatible-mode endpoint. openrouter is a meta-provider: its model string
+// selects any hosted model (including :free ones), so the UI treats model as
+// effectively required there.
+//
+// Status as of 2026-10-01. live: openai, anthropic, gemini, deepseek (every
+// listed ID answered 3/3 minimal requests; gemini-3.1-pro-preview got 429 3/3
+// and is deliberately absent). docs-verified: xai (grok-4.3 is the redirect
+// target in docs.x.ai's May 15 migration guide) and openrouter (current
+// DeepSeek ID in OpenRouter's /api/v1/models list). The other six carry their
+// origin/main IDs unchecked. anthropic stays on Haiku 4.5 as the default:
+// Sonnet 5.5 has adaptive thinking on by default, and thinking tokens count
+// against anthropicMaxTokens.
 var providers = map[string]providerSpec{
-	"anthropic":  {"https://api.anthropic.com/v1", "claude-haiku-4-5", styleAnthropic, false},
-	"openai":     {"https://api.openai.com/v1", "gpt-5-mini", styleOpenAI, false},
-	"gemini":     {"https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.7-flash", styleOpenAI, false},
-	"groq":       {"https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", styleOpenAI, false},
-	"mistral":    {"https://api.mistral.ai/v1", "mistral-small-latest", styleOpenAI, false},
-	"deepseek":   {"https://api.deepseek.com", "deepseek-chat", styleOpenAI, false},
-	"zai":        {"https://api.z.ai/api/paas/v4", "glm-5", styleOpenAI, false},
-	"moonshot":   {"https://api.moonshot.ai/v1", "kimi-k2.6", styleOpenAI, false},
-	"qwen":       {"https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "qwen3-max", styleOpenAI, false},
-	"minimax":    {"https://api.minimax.io/v1", "MiniMax-M2.7", styleOpenAI, false},
-	"xai":        {"https://api.x.ai/v1", "grok-4-fast", styleOpenAI, false},
-	"openrouter": {"https://openrouter.ai/api/v1", "deepseek/deepseek-chat", styleOpenAI, true},
+	"anthropic": {BaseURL: "https://api.anthropic.com/v1", DefaultModel: "claude-haiku-4-5",
+		Models: []string{"claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"}, Style: styleAnthropic, Verified: verifiedLive},
+	"openai": {BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-6-luna",
+		Models: []string{"gpt-6-luna", "gpt-5.6-terra", "gpt-6.1-sol"}, Style: styleOpenAI, Verified: verifiedLive},
+	"gemini": {BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", DefaultModel: "gemini-3.8-flash",
+		Models: []string{"gemini-3.8-flash", "gemini-3.5-flash-lite"}, Style: styleOpenAI, Verified: verifiedLive},
+	"groq": {BaseURL: "https://api.groq.com/openai/v1", DefaultModel: "llama-3.3-70b-versatile",
+		Models: []string{"llama-3.3-70b-versatile"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"mistral": {BaseURL: "https://api.mistral.ai/v1", DefaultModel: "mistral-small-latest",
+		Models: []string{"mistral-small-latest"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"deepseek": {BaseURL: "https://api.deepseek.com", DefaultModel: "deepseek-flash",
+		Models: []string{"deepseek-flash", "deepseek-v4-pro"}, Style: styleOpenAI, Verified: verifiedLive},
+	"zai": {BaseURL: "https://api.z.ai/api/paas/v4", DefaultModel: "glm-5",
+		Models: []string{"glm-5"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"moonshot": {BaseURL: "https://api.moonshot.ai/v1", DefaultModel: "kimi-k2.6",
+		Models: []string{"kimi-k2.6"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"qwen": {BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", DefaultModel: "qwen3-max",
+		Models: []string{"qwen3-max"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"minimax": {BaseURL: "https://api.minimax.io/v1", DefaultModel: "MiniMax-M2.7",
+		Models: []string{"MiniMax-M2.7"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
+	"xai": {BaseURL: "https://api.x.ai/v1", DefaultModel: "grok-4.3",
+		Models: []string{"grok-4.3"}, Style: styleOpenAI, Verified: verifiedDocs},
+	// openrouter/free stays suggested: the page's OpenRouter hint names it.
+	"openrouter": {BaseURL: "https://openrouter.ai/api/v1", DefaultModel: "deepseek/deepseek-v4.1-flash",
+		Models: []string{"deepseek/deepseek-v4.1-flash", "openrouter/free"}, Style: styleOpenAI, JSONFormat: true, Verified: verifiedDocs},
 }
 
 // supportedProviders is the sorted name list used in error messages.

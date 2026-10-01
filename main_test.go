@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -327,6 +329,76 @@ func TestRootFallbackSurvivesTheConfigCase(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "ok" {
 		t.Errorf("body = %q, want %q — the fallthrough landed on the wrong case", got, "ok")
+	}
+}
+
+// pinnedDefaults is the reviewed default model per provider (2026-10-01, see
+// the verification status in the registry). The parity check below cannot see
+// a registry edit on its own — the page reads whatever the registry says — so
+// this table is what makes a default change a deliberate, reviewed edit.
+var pinnedDefaults = map[string]string{
+	"anthropic":  "claude-haiku-4-5",
+	"openai":     "gpt-6-luna",
+	"gemini":     "gemini-3.8-flash",
+	"groq":       "llama-3.3-70b-versatile",
+	"mistral":    "mistral-small-latest",
+	"deepseek":   "deepseek-flash",
+	"zai":        "glm-5",
+	"moonshot":   "kimi-k2.6",
+	"qwen":       "qwen3-max",
+	"minimax":    "MiniMax-M2.7",
+	"xai":        "grok-4.3",
+	"openrouter": "deepseek/deepseek-v4.1-flash",
+}
+
+// The default the page shows for a provider is the default the server applies
+// when the model field is blank: one registry, served through /config.json.
+// Decoded generically so the test reads the wire shape, not the Go struct.
+func TestConfigJSONDefaultsMatchRegistry(t *testing.T) {
+	rec := serveConfig(t, "", "")
+	var cfg struct {
+		Providers map[string]struct {
+			DefaultModel string   `json:"default_model"`
+			Models       []string `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("/config.json body is not valid JSON (%v): %s", err, rec.Body.String())
+	}
+	if len(cfg.Providers) != len(providers) {
+		t.Errorf("/config.json lists %d providers, registry has %d", len(cfg.Providers), len(providers))
+	}
+	for name, spec := range providers {
+		got, ok := cfg.Providers[name]
+		if !ok {
+			t.Errorf("provider %s missing from /config.json", name)
+			continue
+		}
+		if got.DefaultModel != spec.DefaultModel {
+			t.Errorf("provider %s: page default %q, server default %q", name, got.DefaultModel, spec.DefaultModel)
+		}
+		// The default must be among its own suggestions, or the datalist hides it.
+		found := false
+		for _, m := range got.Models {
+			found = found || m == got.DefaultModel
+		}
+		if !found {
+			t.Errorf("provider %s: default %q is not in its model list %v", name, got.DefaultModel, got.Models)
+		}
+	}
+	for name, want := range pinnedDefaults {
+		if got := providers[name].DefaultModel; got != want {
+			t.Errorf("provider %s: registry default %q, pinned %q", name, got, want)
+		}
+	}
+	html, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty map filled from /config.json is fine; a literal with entries is
+	// the second copy this test exists to prevent.
+	if regexp.MustCompile(`DEFAULT_MODELS\s*=\s*\{\s*[^}\s]`).Match(html) {
+		t.Error("index.html still hardcodes DEFAULT_MODELS; it must read the defaults from /config.json")
 	}
 }
 
