@@ -793,26 +793,50 @@ var trialListKeys = []string{"trials", "results"}
 // are deliberately not filled: there an absent key means "not posted".
 var trialListKeysFilled = []string{"conditions", "interventions", "countries", "secondary_ids"}
 
-// fillTrialListKeys adds every missing trialListKeysFilled key to a Trial row
-// as []. A Trial row is recognised by its "phases" key, which the CLI always
-// emits; any other row shape is left alone. Reports whether it added a key.
-func fillTrialListKeys(trial map[string]json.RawMessage) bool {
+// missingTrialListKeys returns the trialListKeysFilled keys a Trial row lacks,
+// to be filled with []. A Trial row is recognised by its "phases" key, which
+// the CLI always emits; any other row shape gets none.
+func missingTrialListKeys(trial map[string]json.RawMessage) []string {
 	if _, ok := trial["phases"]; !ok {
-		return false
+		return nil
 	}
-	added := false
+	var missing []string
 	for _, k := range trialListKeysFilled {
 		if _, has := trial[k]; !has {
-			trial[k] = json.RawMessage(`[]`)
-			added = true
+			missing = append(missing, k)
 		}
 	}
-	return added
+	return missing
+}
+
+// appendObjectFields splices the "key":value pairs in fields into the JSON
+// object item just before its closing brace, so the existing key order (which
+// the web table takes its columns from) is kept; re-encoding through a map
+// would sort the keys. Tolerates whitespace before the brace and the empty
+// object. Reports false when item does not end in "}" or the result is invalid.
+func appendObjectFields(item json.RawMessage, fields []string) (json.RawMessage, bool) {
+	const ws = " \t\r\n"
+	trimmed := bytes.TrimRight(item, ws)
+	if len(trimmed) == 0 || trimmed[len(trimmed)-1] != '}' {
+		return nil, false
+	}
+	body := bytes.TrimRight(trimmed[:len(trimmed)-1], ws)
+	var b bytes.Buffer
+	b.Write(body)
+	if len(body) > 0 && body[len(body)-1] != '{' {
+		b.WriteByte(',')
+	}
+	b.WriteString(strings.Join(fields, ","))
+	b.WriteByte('}')
+	if !json.Valid(b.Bytes()) {
+		return nil, false
+	}
+	return b.Bytes(), true
 }
 
 // normalizeTrialPhase ensures every object in the "results" (or "rows") array
 // of raw carries a "phase" key, and every Trial row its list keys
-// (fillTrialListKeys). The CLI omits the key when the field is empty
+// (missingTrialListKeys). The CLI omits the key when the field is empty
 // (omitempty); callers in Python/R get a KeyError on those rows. Best-effort:
 // any parse failure returns raw unchanged.
 func normalizeTrialPhase(raw []byte) []byte {
@@ -845,17 +869,16 @@ func normalizeTrialPhase(raw []byte) []byte {
 		if err := json.Unmarshal(item, &trial); err != nil {
 			continue
 		}
-		rowChanged := false
+		var fields []string
 		if _, has := trial["phase"]; !has {
-			trial["phase"] = json.RawMessage(`""`)
-			rowChanged = true
+			fields = append(fields, `"phase":""`)
 		}
-		if fillTrialListKeys(trial) {
-			rowChanged = true
+		for _, k := range missingTrialListKeys(trial) {
+			fields = append(fields, `"`+k+`":[]`)
 		}
-		if rowChanged {
-			b, err := json.Marshal(trial)
-			if err != nil {
+		if len(fields) > 0 {
+			b, ok := appendObjectFields(item, fields)
+			if !ok {
 				continue
 			}
 			list[i] = b

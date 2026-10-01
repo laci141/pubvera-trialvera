@@ -468,3 +468,67 @@ func TestNormalizeTrialPhaseListKeysOnlyOnTrialRows(t *testing.T) {
 		t.Errorf("non-trial row must pass through byte-identical, got %s", got)
 	}
 }
+
+// fillTrialListKeys made nearly every live row go through a map re-encode,
+// which sorts keys alphabetically; the table takes its columns from row 0's
+// key order, so it started with completion_date instead of id. A filled row
+// keeps the CLI's key order, with the added keys only at the end.
+func TestNormalizeTrialPhaseKeepsKeyOrder(t *testing.T) {
+	row := `{"id":"NCT03427931","title":"CGM Use","status":"COMPLETED","phase":"NA","phases":["NA"],"conditions":["T1DM"],"interventions":["CGM"],"sponsor":"UVA","countries":["United States"],"completion_date":"2019-07-11","enrollment":7,"has_results":true,"source":"clinicaltrials.gov"}`
+	raw := []byte(`{"results":[` + row + `]}`)
+	var out struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(normalizeTrialPhase(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("want 1 row, got %d", len(out.Results))
+	}
+	want := strings.TrimSuffix(row, "}") + `,"secondary_ids":[]}`
+	if got := string(out.Results[0]); got != want {
+		t.Errorf("row key order changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// Pretty-printed rows and an empty {} row get the missing keys spliced in
+// as valid JSON; a Trial row that needs nothing passes through untouched.
+func TestNormalizeTrialPhaseSpliceShapes(t *testing.T) {
+	pretty := "{\n  \"id\": \"NCT1\",\n  \"phases\": [],\n  \"conditions\": [\"D\"]\n}"
+	raw := []byte("{\"results\":[" + pretty + ",\n {} ]}")
+	got := normalizeTrialPhase(raw)
+	if !json.Valid(got) {
+		t.Fatalf("output is not valid JSON: %s", got)
+	}
+	var out struct {
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(out.Results))
+	}
+	p := out.Results[0]
+	if p["id"] != "NCT1" || p["phase"] != "" {
+		t.Errorf("pretty row id/phase = %v/%v", p["id"], p["phase"])
+	}
+	if c, _ := p["conditions"].([]any); len(c) != 1 || c[0] != "D" {
+		t.Errorf("pretty row conditions = %v, want [D]", p["conditions"])
+	}
+	for _, k := range []string{"interventions", "countries", "secondary_ids"} {
+		if v, ok := p[k].([]any); !ok || len(v) != 0 {
+			t.Errorf("pretty row %q = %v, want []", k, p[k])
+		}
+	}
+	// {} is no Trial row (no "phases"): it gets "phase" only, without a
+	// leading comma.
+	if e := out.Results[1]; len(e) != 1 || e["phase"] != "" {
+		t.Errorf("empty row = %v, want {phase:\"\"}", e)
+	}
+
+	full := []byte(`{"results":[{"id":"NCT2","phase":"PHASE2","phases":["PHASE2"],"conditions":[],"interventions":[],"countries":[],"secondary_ids":[]}]}`)
+	if got := normalizeTrialPhase(full); !bytes.Equal(got, full) {
+		t.Errorf("row needing nothing must stay byte-identical, got %s", got)
+	}
+}
