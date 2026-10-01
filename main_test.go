@@ -421,3 +421,50 @@ func TestContentTokens(t *testing.T) {
 		t.Errorf("accent fold failed: %v", toks)
 	}
 }
+
+// ---- trial list keys always present ------------------------------------------
+
+// The CLI tags conditions, interventions, countries and secondary_ids
+// omitempty, so a live 126-row "diabetes" JSON export had 14 rows with no
+// "countries" key and NCT02456051 with no "interventions" key. Every Trial row
+// (recognised by its always-present "phases" key) must carry all four as [].
+func TestNormalizeTrialPhaseFillsMissingListKeys(t *testing.T) {
+	raw := []byte(`{"returned":2,"results":[` +
+		`{"id":"NCT02456051","phase":"","phases":[],"conditions":["Diabetes"]},` +
+		`{"id":"NCT00000002","phase":"PHASE2","phases":["PHASE2"],"conditions":["T2DM"],"interventions":["Metformin"],"countries":["India"],"secondary_ids":[{"id":"X"}]}]}`)
+	var out struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(normalizeTrialPhase(raw), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(out.Results))
+	}
+	for _, k := range []string{"countries", "interventions", "secondary_ids"} {
+		if got := string(out.Results[0][k]); got != "[]" {
+			t.Errorf("row NCT02456051 %q = %q, want []", k, got)
+		}
+	}
+	// Present values are never touched.
+	if got := string(out.Results[0]["conditions"]); got != `["Diabetes"]` {
+		t.Errorf("existing conditions rewritten: %s", got)
+	}
+	if got := string(out.Results[1]["countries"]); got != `["India"]` {
+		t.Errorf("existing countries rewritten: %s", got)
+	}
+	// Dates and why_stopped stay absent: absent means "not posted".
+	for _, k := range []string{"start_date", "primary_completion_date", "completion_date", "why_stopped"} {
+		if _, ok := out.Results[0][k]; ok {
+			t.Errorf("%q must stay absent", k)
+		}
+	}
+}
+
+func TestNormalizeTrialPhaseListKeysOnlyOnTrialRows(t *testing.T) {
+	// A row without the Trial signature ("phases") gets no list keys.
+	raw := []byte(`{"results":[{"name":"x","phase":"PHASE1"}]}`)
+	if got := normalizeTrialPhase(raw); !bytes.Equal(got, raw) {
+		t.Errorf("non-trial row must pass through byte-identical, got %s", got)
+	}
+}

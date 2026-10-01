@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // resultsJSON builds a search/recruiting-shaped CLI output with n entries in
@@ -620,6 +621,131 @@ func TestLLMSynthesizeStopReasonGuard(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "sk-test-key") {
 				t.Errorf("error leaked the API key: %q", err.Error())
+			}
+		})
+	}
+}
+
+// ---- enrollment zeros in the fact sheet --------------------------------------
+
+// Live "diabetes" search: 4 of 126 rows carried enrollment 0 — three WITHDRAWN
+// trials with an ACTUAL count of 0, and NCT01089192, whose registry record has
+// no enrollment at all and which the CLI marshals as 0. The range stays over
+// non-zero values (a fake 0 must not become the minimum), but the zeros must be
+// stated instead of silently dropped.
+func TestBuildFactSheetCountsZeroEnrollment(t *testing.T) {
+	enrollments := []int{0, 5, 0, 120, 14673, 0, 0, 40}
+	trials := make([]map[string]any, 0, len(enrollments))
+	for i, e := range enrollments {
+		trials = append(trials, map[string]any{"id": fmt.Sprintf("NCT%08d", i), "enrollment": e})
+	}
+	raw, err := json.Marshal(map[string]any{"returned": len(trials), "trials": trials})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := buildFactSheet(raw)
+	want := "- enrollment range (non-zero): 5 to 14673; 4 trials report 0 or no enrollment"
+	if !strings.Contains(sheet, want) {
+		t.Errorf("fact sheet missing %q:\n%s", want, sheet)
+	}
+}
+
+func TestBuildFactSheetNoZeroEnrollmentOmitsCount(t *testing.T) {
+	sheet := buildFactSheet(factSheetFixture(t))
+	if strings.Contains(sheet, "report 0 or no enrollment") {
+		t.Errorf("zero count must be omitted when no row reports 0:\n%s", sheet)
+	}
+}
+
+// ---- provider retry and the 5xx message --------------------------------------
+
+// Live: a Gemini 503 ("model is currently experiencing high demand") got no
+// retry, and the raw provider JSON reached the user inside the warning.
+// 502/503/504 are retried once (the call has no side effects); a 5xx error is a
+// fixed message without the body; a 4xx is not retried and keeps its sanitized
+// body.
+func TestLLMSynthesizeRetry(t *testing.T) {
+	const goodJSON = `{"summary":"Thirty recruiting trials were found.","key_points":["30 trials found"],"caveats":["registry-only signal"],"not_advice":""}`
+	okBody, err := json.Marshal(map[string]any{
+		"choices": []map[string]any{{"message": map[string]any{"content": goodJSON}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const busyBody = `{"error":{"code":503,"message":"The model is currently experiencing high demand. Please try again later.","status":"UNAVAILABLE"}}`
+	const badBody = `{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}`
+
+	origWait := llmRetryWait
+	llmRetryWait = 10 * time.Millisecond
+	defer func() { llmRetryWait = origWait }()
+
+	type reply struct {
+		code int
+		body string
+	}
+	tests := []struct {
+		name     string
+		replies  []reply // the last one repeats
+		wantHits int
+		wantErr  string // exact error; "" means success expected
+	}{
+		{name: "503 then 200 succeeds on the retry", replies: []reply{{503, busyBody}, {200, string(okBody)}}, wantHits: 2},
+		{name: "502 then 200 succeeds on the retry", replies: []reply{{502, "bad gateway"}, {200, string(okBody)}}, wantHits: 2},
+		{name: "504 then 200 succeeds on the retry", replies: []reply{{504, "gateway timeout"}, {200, string(okBody)}}, wantHits: 2},
+		{name: "503 twice gives the fixed message", replies: []reply{{503, busyBody}}, wantHits: 2,
+			wantErr: "provider returned HTTP 503 (temporarily unavailable)"},
+		{name: "500 is not retried and hides the body", replies: []reply{{500, busyBody}}, wantHits: 1,
+			wantErr: "provider returned HTTP 500 (temporarily unavailable)"},
+		{name: "400 is not retried and keeps the sanitized body", replies: []reply{{400, badBody}}, wantHits: 1,
+			wantErr: "provider returned HTTP 400: " + badBody},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rp := tc.replies[len(tc.replies)-1]
+				if hits < len(tc.replies) {
+					rp = tc.replies[hits]
+				}
+				hits++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(rp.code)
+				_, _ = w.Write([]byte(rp.body))
+			}))
+			defer srv.Close()
+
+			spec := providers["openai"]
+			orig := spec
+			spec.BaseURL = srv.URL
+			providers["openai"] = spec
+			defer func() { providers["openai"] = orig }()
+
+			syn, err := llmSynthesize(context.Background(), "openai", "sk-test-key", "", "search", []string{"diabetes"}, []byte(`{"results":[]}`))
+			if hits != tc.wantHits {
+				t.Errorf("provider hit %d times, want %d", hits, tc.wantHits)
+			}
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want success, got error: %v", err)
+				}
+				if syn == nil || syn.Summary == "" {
+					t.Fatalf("want a parsed synthesis, got %+v", syn)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want error %q, got success", tc.wantErr)
+			}
+			if err.Error() != tc.wantErr {
+				t.Errorf("error = %q, want %q", err.Error(), tc.wantErr)
+			}
+			if strings.Contains(tc.wantErr, "temporarily unavailable") {
+				for _, leak := range []string{"high demand", "UNAVAILABLE", "{"} {
+					if strings.Contains(err.Error(), leak) {
+						t.Errorf("5xx error leaked provider body text %q: %q", leak, err.Error())
+					}
+				}
 			}
 		})
 	}

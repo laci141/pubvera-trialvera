@@ -36,6 +36,11 @@ import (
 // request budget in runCLI with room for the CLI run that precedes it.
 const llmTimeout = 60 * time.Second
 
+// llmRetryWait is the pause before the single retry of a 502/503/504 or a
+// transport error. The retry runs inside the same llmTimeout context. A var so
+// tests can shorten it.
+var llmRetryWait = time.Second
+
 // authStyle selects how the key is presented and which wire format is used.
 type authStyle int
 
@@ -334,9 +339,11 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 // HasResults is a pointer so an absent field is distinguishable from false —
 // the with/without-results lines are only emitted when EVERY row carries the
 // field (a partial count would be exactly the miscounting we're preventing).
+// Enrollment is a pointer for the same reason: a row without the key is not
+// counted as reporting 0.
 type factTrial struct {
 	HasResults   *bool  `json:"has_results"`
-	Enrollment   int    `json:"enrollment"`
+	Enrollment   *int   `json:"enrollment"`
 	SponsorClass string `json:"sponsor_class"`
 }
 
@@ -438,22 +445,34 @@ func buildFactSheet(result any) string {
 	if len(obj.TopCountries) > 0 {
 		lines = append(lines, "- top countries: "+rankedLine(obj.TopCountries))
 	}
-	minE, maxE, haveE := 0, 0, false
+	// The range is over non-zero enrollment only: the CLI marshals a registry
+	// record with no enrollment as 0 (live: NCT01089192), so a 0 minimum could
+	// be fake. The zeros are counted and stated instead of silently dropped.
+	minE, maxE, haveE, zeroE := 0, 0, false, 0
 	for _, r := range rows {
-		if r.Enrollment > 0 {
+		if r.Enrollment == nil {
+			continue
+		}
+		e := *r.Enrollment
+		if e == 0 {
+			zeroE++
+		}
+		if e > 0 {
 			if !haveE {
-				minE, maxE, haveE = r.Enrollment, r.Enrollment, true
+				minE, maxE, haveE = e, e, true
 				continue
 			}
-			if r.Enrollment < minE {
-				minE = r.Enrollment
+			if e < minE {
+				minE = e
 			}
-			if r.Enrollment > maxE {
-				maxE = r.Enrollment
+			if e > maxE {
+				maxE = e
 			}
 		}
 	}
-	if haveE {
+	if haveE && zeroE > 0 {
+		lines = append(lines, fmt.Sprintf("- enrollment range (non-zero): %d to %d; %d trials report 0 or no enrollment", minE, maxE, zeroE))
+	} else if haveE {
 		lines = append(lines, fmt.Sprintf("- enrollment range: %d to %d", minE, maxE))
 	}
 	classCounts := map[string]int{}
@@ -565,6 +584,41 @@ func llmFailKindOf(err error) string {
 	return llmFailOther
 }
 
+// llmPost sends one synthesis request and reads the response. retryable is
+// true for a transport or read error and for HTTP 502/503/504 — the outcomes a
+// single retry can fix; never for a 4xx, a 500 or a request that could not be
+// built.
+func llmPost(ctx context.Context, style authStyle, url, key string, body []byte) (status int, respBody []byte, retryable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, false, newLLMError(llmFailOther, "build request: "+sanitizeLLMError(err.Error(), key))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if style == styleAnthropic {
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// Transport errors can embed the URL but never the key (it travels in a
+		// header); sanitize anyway.
+		return 0, nil, true, newLLMError(llmFailUpstream, "request failed: "+sanitizeLLMError(err.Error(), key))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, true, newLLMError(llmFailUpstream, "read response: "+sanitizeLLMError(err.Error(), key))
+	}
+	switch resp.StatusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		retryable = true
+	}
+	return resp.StatusCode, respBody, retryable, nil
+}
+
 func llmSynthesize(ctx context.Context, provider, key, model, command string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
 	spec, ok := providers[provider]
 	if !ok { // callers validate first; belt and braces
@@ -596,38 +650,29 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, newLLMError(llmFailOther, "build request: "+sanitizeLLMError(err.Error(), key))
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if spec.Style == styleAnthropic {
-		req.Header.Set("x-api-key", key)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	} else {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		// Transport errors can embed the URL but never the key (it travels in a
-		// header); sanitize anyway.
-		return nil, newLLMError(llmFailUpstream, "request failed: "+sanitizeLLMError(err.Error(), key))
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, newLLMError(llmFailUpstream, "read response: "+sanitizeLLMError(err.Error(), key))
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// A 4xx is the provider refusing before any model work — bad key,
-		// unknown model, quota. A 5xx is their side breaking, same bucket as a
-		// transport fault.
-		kind := llmFailUpstream
-		if resp.StatusCode < 500 {
-			kind = llmFailRejected
+	// One retry, inside the same llmTimeout context, on a transport error or a
+	// 502/503/504: the call has no side effects. Live: a Gemini 503 ("model is
+	// currently experiencing high demand") failed the synthesis on one try.
+	status, respBody, retryable, err := llmPost(ctx, spec.Style, url, key, body)
+	if retryable {
+		select {
+		case <-time.After(llmRetryWait):
+			status, respBody, _, err = llmPost(ctx, spec.Style, url, key, body)
+		case <-ctx.Done():
 		}
-		return nil, newLLMError(kind, fmt.Sprintf("provider returned HTTP %d: %s", resp.StatusCode, sanitizeLLMError(string(respBody), key)))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if status >= 500 {
+		// Their side breaking, same bucket as a transport fault. The body is
+		// provider JSON, not a message for the user: a fixed text replaces it.
+		return nil, newLLMError(llmFailUpstream, fmt.Sprintf("provider returned HTTP %d (temporarily unavailable)", status))
+	}
+	if status < 200 || status >= 300 {
+		// A 4xx is the provider refusing before any model work — bad key,
+		// unknown model, quota. Its sanitized body says which.
+		return nil, newLLMError(llmFailRejected, fmt.Sprintf("provider returned HTTP %d: %s", status, sanitizeLLMError(string(respBody), key)))
 	}
 
 	if spec.Style == styleAnthropic && anthropicHitTokenLimit(respBody) {
