@@ -43,7 +43,7 @@ docker build -t ctw . && docker run -p 8091:8091 ctw
 | `compare` → *aspirin* vs *ibuprofen* | side-by-side cards (2,185 vs 1,099 trials) + LLM comparison |
 | `recruiting` → *heart disease*, limit 20 | 1,955+ matches, top 20, synthesized |
 | `health` | data-source status for all four backends |
-| BYOK model field | pre-filled per provider (`deepseek-chat`, `openrouter/free`, …), fully editable |
+| BYOK model field | left blank; the placeholder names the provider default (`deepseek-flash`, `claude-haiku-4-5`, …), served from the Go registry; fully editable |
 
 ## What's new this sprint
 
