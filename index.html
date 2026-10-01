@@ -1148,6 +1148,8 @@ function domViewProvider(key){
     const filters=[];
     const q=scope.querySelector(".qfilter");
     if(q&&q.value.trim())filters.push('filter: "'+q.value.trim()+'"');
+    const pf=scope.querySelector(".phasefilter");
+    if(pf&&pf.value)filters.push("phase: "+pf.value);
     const th=scope.querySelector('th[data-dir="asc"],th[data-dir="desc"]');
     if(th)filters.push("sort: "+th.textContent.replace(/[⇅↑↓]/g,"").trim()+" "+th.dataset.dir);
     if(!els.length)return {rows:data,filters};   // untagged shape: nothing filterable on screen
@@ -1495,8 +1497,10 @@ function matchesPhase(row,phase,idx){
   if(!phase)return true;
   if(idx<0)return true;              // no Phase column here — nothing to filter on
   const cell=row.cells?row.cells[idx]:null;
-  const val=cell?cell.textContent.trim():"";
-  return val===phase||(phase==="PHASE1"&&val==="EARLY_PHASE1");
+  // A multi-phase trial reads "PHASE1/PHASE2" (CLI) or "PHASE1 / PHASE2"
+  // (flattened registry row): it matches each of its phases.
+  const parts=(cell?cell.textContent:"").split("/").map(p=>p.trim());
+  return parts.some(p=>p===phase||(phase==="PHASE1"&&p==="EARLY_PHASE1"));
 }
 
 function applyFilters(scope){

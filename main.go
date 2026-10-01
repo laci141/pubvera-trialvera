@@ -787,8 +787,32 @@ type rankedEntry struct {
 // phase_distribution was computed from.
 var trialListKeys = []string{"trials", "results"}
 
+// trialListKeysFilled are the Trial list fields the CLI tags omitempty. A JSON
+// export of 126 live rows had 14 without "countries" and one without
+// "interventions"; a missing list key is filled with []. Dates and why_stopped
+// are deliberately not filled: there an absent key means "not posted".
+var trialListKeysFilled = []string{"conditions", "interventions", "countries", "secondary_ids"}
+
+// fillTrialListKeys adds every missing trialListKeysFilled key to a Trial row
+// as []. A Trial row is recognised by its "phases" key, which the CLI always
+// emits; any other row shape is left alone. Reports whether it added a key.
+func fillTrialListKeys(trial map[string]json.RawMessage) bool {
+	if _, ok := trial["phases"]; !ok {
+		return false
+	}
+	added := false
+	for _, k := range trialListKeysFilled {
+		if _, has := trial[k]; !has {
+			trial[k] = json.RawMessage(`[]`)
+			added = true
+		}
+	}
+	return added
+}
+
 // normalizeTrialPhase ensures every object in the "results" (or "rows") array
-// of raw carries a "phase" key. The CLI omits the key when the field is empty
+// of raw carries a "phase" key, and every Trial row its list keys
+// (fillTrialListKeys). The CLI omits the key when the field is empty
 // (omitempty); callers in Python/R get a KeyError on those rows. Best-effort:
 // any parse failure returns raw unchanged.
 func normalizeTrialPhase(raw []byte) []byte {
@@ -821,8 +845,15 @@ func normalizeTrialPhase(raw []byte) []byte {
 		if err := json.Unmarshal(item, &trial); err != nil {
 			continue
 		}
+		rowChanged := false
 		if _, has := trial["phase"]; !has {
 			trial["phase"] = json.RawMessage(`""`)
+			rowChanged = true
+		}
+		if fillTrialListKeys(trial) {
+			rowChanged = true
+		}
+		if rowChanged {
 			b, err := json.Marshal(trial)
 			if err != nil {
 				continue
