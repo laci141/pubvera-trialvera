@@ -1126,7 +1126,7 @@ function trialExportRow(r){
     "URL":"https://clinicaltrials.gov/study/"+r.id};
   Object.entries(r).forEach(([k,v])=>{
     if(TRIAL_COLS[k]||v==null)return;
-    if(Array.isArray(v)){if(v.every(x=>typeof x!=="object"))out[k]=v.join("; ");return;}
+    if(Array.isArray(v)){if(v.every(x=>typeof x!=="object"))out[k]=v.join("; ");else if(v.every(x=>x&&typeof x==="object"&&typeof x.id==="string"&&x.id))out[k]=v.map(x=>x.id).join("; ");return;}
     if(typeof v!=="object")out[k]=v;});
   return out;
 }
