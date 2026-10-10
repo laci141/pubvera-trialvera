@@ -20,12 +20,12 @@
 # Stage 2 builds the web server for linux/amd64 from ./main.go.
 ARG PP_LIBRARY_COMMIT=58edea349ce3df8a301d4d8950119487c32604b8
 
-FROM golang:1.26-alpine AS cli-builder
+FROM golang:1.27.2-alpine AS cli-builder
 ARG PP_LIBRARY_COMMIT
 RUN CGO_ENABLED=0 go install -trimpath \
     github.com/mvanhorn/printing-press-library/library/health/clinical-trials/cmd/clinical-trials-pp-cli@${PP_LIBRARY_COMMIT}
 
-FROM golang:1.26-alpine AS web-builder
+FROM golang:1.27.2-alpine AS web-builder
 WORKDIR /build
 COPY go.mod ./
 COPY *.go ./
