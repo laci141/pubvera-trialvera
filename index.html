@@ -1070,6 +1070,8 @@ function flattenStudyRow(s){
   const sponsor=(spo.leadSponsor||{}).name;
   if(sponsor)out.sponsor=sponsor;
   const sd=(st.startDateStruct||{}).date;              if(sd) out.start_date=sd;
+  const fp=(st.studyFirstPostDateStruct||{}).date;      if(fp) out.first_posted=fp;
+  const lu=(st.lastUpdatePostDateStruct||{}).date;      if(lu) out.last_update=lu;
   const pcd=(st.primaryCompletionDateStruct||{}).date;  if(pcd)out.primary_completion_date=pcd;
   const cd=(st.completionDateStruct||{}).date;          if(cd) out.completion_date=cd;
   const countries=[];
@@ -1367,11 +1369,17 @@ function toBibTeX(rows){
     const sponsor=bibEsc(r.sponsor||"");
     if(sponsor)fields.push("  author       = {{"+sponsor+"}}");
     fields.push("  howpublished = {ClinicalTrials.gov Identifier: "+id+"}");
-    const y=String(r.start_date||"").match(/\d{4}/);
+    // Year = registration (first posted) date, else last update; never start_date,
+    // which is in the future for trials that have not started.
+    const y=String(r.first_posted||"").match(/\d{4}/)||String(r.last_update||"").match(/\d{4}/);
     if(y)fields.push("  year         = {"+y[0]+"}");
+    const now=new Date(),p2=n=>String(n).padStart(2,"0");
+    fields.push("  urldate      = {"+now.getFullYear()+"-"+p2(now.getMonth()+1)+"-"+p2(now.getDate())+"}");
     fields.push("  url          = {https://clinicaltrials.gov/study/"+id+"}");
     const phase=bibEsc(r.phase||(Array.isArray(r.phases)?r.phases.join("/"):""));
-    const note=[phase,bibEsc(r.status||"")].filter(Boolean).join(", ");
+    const note=[phase,bibEsc(r.status||""),
+      r.first_posted?"First posted: "+bibEsc(r.first_posted):"",
+      r.last_update?"Last updated: "+bibEsc(r.last_update):""].filter(Boolean).join(", ");
     if(note)fields.push("  note         = {"+note+"}");
     out.push("@misc{"+id+",\n"+fields.join(",\n")+"\n}");
   });
