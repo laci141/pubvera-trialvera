@@ -636,6 +636,7 @@ func contentTokens(query string) []string {
 // never drop what it can't judge.
 func trialRelevant(entry json.RawMessage, tokens []string) bool {
 	var t struct {
+		ID            string   `json:"id"`
 		Title         string   `json:"title"`
 		Conditions    []string `json:"conditions"`
 		Interventions []string `json:"interventions"`
@@ -643,8 +644,8 @@ func trialRelevant(entry json.RawMessage, tokens []string) bool {
 	if err := json.Unmarshal(entry, &t); err != nil {
 		return true
 	}
-	parts := make([]string, 0, 1+len(t.Conditions)+len(t.Interventions))
-	parts = append(parts, t.Title)
+	parts := make([]string, 0, 2+len(t.Conditions)+len(t.Interventions))
+	parts = append(parts, t.ID, t.Title)
 	parts = append(parts, t.Conditions...)
 	parts = append(parts, t.Interventions...)
 	hay := normalizeGateText(strings.Join(parts, "\n"))
