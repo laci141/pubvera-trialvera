@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -746,6 +747,139 @@ func TestLLMSynthesizeRetry(t *testing.T) {
 						t.Errorf("5xx error leaked provider body text %q: %q", leak, err.Error())
 					}
 				}
+			}
+		})
+	}
+}
+
+// ---- Haiku 5.5 default, thinking disabled, robust Anthropic parse ----------
+
+func TestAnthropicDefaultModelIsHaiku55(t *testing.T) {
+	if got := providers["anthropic"].DefaultModel; got != "claude-haiku-5-5" {
+		t.Errorf("anthropic default = %q, want claude-haiku-5-5", got)
+	}
+	found := false
+	for _, m := range providers["anthropic"].Models {
+		if m == "claude-haiku-4-5" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("claude-haiku-4-5 must stay in the model list for BYOK users")
+	}
+}
+
+// goodSynthJSON is a minimal valid synthesis for the stub-server tests below.
+const goodSynthJSON = `{"summary":"Thirty recruiting trials were found.","key_points":["30 trials found","largest enrollment 149"],"caveats":["registry-only signal"],"not_advice":""}`
+
+// anthropicStub serves body for every request and returns the last request body.
+func anthropicStub(t *testing.T, body string) (restore func(), lastReq *[]byte) {
+	t.Helper()
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	orig := providers["anthropic"]
+	spec := orig
+	spec.BaseURL = srv.URL
+	providers["anthropic"] = spec
+	return func() { providers["anthropic"] = orig; srv.Close() }, &got
+}
+
+func TestAnthropicRequestThinkingPerModel(t *testing.T) {
+	tests := []struct {
+		model        string
+		wantThinking bool
+	}{
+		{"", true}, // blank -> default claude-haiku-5-5
+		{"claude-haiku-5-5", true},
+		{"claude-sonnet-5-5", false},
+		{"claude-haiku-4-5", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			restore, req := anthropicStub(t, `{"stop_reason":"end_turn","content":[{"type":"text","text":`+fmt.Sprintf("%q", goodSynthJSON)+`}]}`)
+			defer restore()
+			if _, err := llmSynthesize(context.Background(), "anthropic", "sk-test-key", tc.model, "search", []string{"diabetes"}, []byte(`{"results":[]}`)); err != nil {
+				t.Fatalf("llmSynthesize: %v", err)
+			}
+			s := string(*req)
+			if has := strings.Contains(s, `"thinking":{"type":"disabled"}`); has != tc.wantThinking {
+				t.Errorf("thinking disabled present = %v, want %v: %s", has, tc.wantThinking, s)
+			}
+			if !tc.wantThinking && strings.Contains(s, "thinking") {
+				t.Errorf("request must not carry thinking: %s", s)
+			}
+			if strings.Contains(s, "temperature") {
+				t.Errorf("request must not carry temperature: %s", s)
+			}
+		})
+	}
+}
+
+func TestExtractChatTextAnthropicBlocks(t *testing.T) {
+	tests := []struct {
+		name, body, want string
+	}{
+		{"thinking block then text", `{"content":[{"type":"thinking","thinking":"hmm {x}"},{"type":"text","text":"{\"a\":1}"}]}`, `{"a":1}`},
+		{"two text blocks concatenate", `{"content":[{"type":"text","text":"{\"a\":"},{"type":"text","text":"1}"}]}`, `{"a":1}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, err := extractChatText(styleAnthropic, []byte(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text != tc.want {
+				t.Fatalf("text = %q, want %q", text, tc.want)
+			}
+			obj, ok := firstBalancedObject(text)
+			if !ok || obj != `{"a":1}` {
+				t.Fatalf("firstBalancedObject = %q, %v", obj, ok)
+			}
+		})
+	}
+}
+
+func TestLLMSynthesizeAnthropicSplitTextBlocks(t *testing.T) {
+	half := len(goodSynthJSON) / 2
+	b, _ := json.Marshal(map[string]any{
+		"stop_reason": "end_turn",
+		"content": []map[string]any{
+			{"type": "thinking", "thinking": "x"},
+			{"type": "text", "text": goodSynthJSON[:half]},
+			{"type": "text", "text": goodSynthJSON[half:]},
+		},
+	})
+	restore, _ := anthropicStub(t, string(b))
+	defer restore()
+	syn, err := llmSynthesize(context.Background(), "anthropic", "sk-test-key", "", "search", []string{"diabetes"}, []byte(`{"results":[]}`))
+	if err != nil {
+		t.Fatalf("want success, got %v", err)
+	}
+	if syn.Summary == "" {
+		t.Errorf("empty summary: %+v", syn)
+	}
+}
+
+func TestFirstBalancedObject(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"brace inside string, then second object", `x {"a":"}"} y {"b":2}`, `{"a":"}"}`, true},
+		{"escaped quote in string", `{"a":"q\" }"} tail`, `{"a":"q\" }"}`, true},
+		{"nested", `pre {"a":{"b":1}} post`, `{"a":{"b":1}}`, true},
+		{"unbalanced", `{"a":{"b":1}`, "", false},
+		{"no brace", `no json here`, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := firstBalancedObject(tc.in)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("firstBalancedObject(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
 			}
 		})
 	}

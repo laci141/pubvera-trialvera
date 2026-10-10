@@ -88,12 +88,14 @@ type providerSpec struct {
 // and is deliberately absent). docs-verified: xai (grok-4.3 is the redirect
 // target in docs.x.ai's May 15 migration guide) and openrouter (current
 // DeepSeek ID in OpenRouter's /api/v1/models list). The other six carry their
-// origin/main IDs unchecked. anthropic stays on Haiku 4.5 as the default:
-// Sonnet 5.5 has adaptive thinking on by default, and thinking tokens count
-// against anthropicMaxTokens.
+// origin/main IDs unchecked. anthropic's default moved from Haiku 4.5 to
+// Haiku 5.5 (4.5 stays listed for BYOK users). Claude 5.5 models have thinking
+// on by default and it counts against anthropicMaxTokens, so the Haiku 5.5
+// request sends thinking disabled (other models unchanged). The 5.5 default is
+// not yet verified live from this repo.
 var providers = map[string]providerSpec{
-	"anthropic": {BaseURL: "https://api.anthropic.com/v1", DefaultModel: "claude-haiku-4-5",
-		Models: []string{"claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"}, Style: styleAnthropic, Verified: verifiedLive},
+	"anthropic": {BaseURL: "https://api.anthropic.com/v1", DefaultModel: "claude-haiku-5-5",
+		Models: []string{"claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"}, Style: styleAnthropic, Verified: verifiedLive},
 	"openai": {BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-6-luna",
 		Models: []string{"gpt-6-luna", "gpt-5.6-terra", "gpt-6.1-sol"}, Style: styleOpenAI, Verified: verifiedLive},
 	"gemini": {BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", DefaultModel: "gemini-3.8-flash",
@@ -538,10 +540,21 @@ type openAIRequest struct {
 // only later, as a confusing JSON parse error.
 const anthropicMaxTokens = 2048
 
+// anthropicThinkingOffModel is the only model sent thinking disabled: Haiku 5.5
+// spent the whole max_tokens on thinking blocks (stop_reason max_tokens). Other
+// models are left unchanged; type "enabled" is rejected with HTTP 400.
+const anthropicThinkingOffModel = "claude-haiku-5-5"
+
+// anthropicThinking switches extended thinking.
+type anthropicThinking struct {
+	Type string `json:"type"`
+}
+
 type anthropicRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Messages  []chatMessage `json:"messages"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	Messages  []chatMessage      `json:"messages"`
+	Thinking  *anthropicThinking `json:"thinking,omitempty"`
 }
 
 // llmSynthesize makes one chat call to the selected provider and parses the
@@ -634,7 +647,11 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	switch spec.Style {
 	case styleAnthropic:
 		url = spec.BaseURL + "/messages"
-		payload = anthropicRequest{Model: model, MaxTokens: anthropicMaxTokens, Messages: []chatMessage{{Role: "user", Content: prompt}}}
+		areq := anthropicRequest{Model: model, MaxTokens: anthropicMaxTokens, Messages: []chatMessage{{Role: "user", Content: prompt}}}
+		if model == anthropicThinkingOffModel {
+			areq.Thinking = &anthropicThinking{Type: "disabled"}
+		}
+		payload = areq
 	default:
 		url = spec.BaseURL + "/chat/completions"
 		reqPayload := openAIRequest{Model: model, Messages: []chatMessage{{Role: "user", Content: prompt}}}
@@ -906,10 +923,14 @@ func extractChatText(style authStyle, body []byte) (string, error) {
 		if err := json.Unmarshal(body, &r); err != nil {
 			return "", errors.New("invalid provider response JSON")
 		}
+		var sb strings.Builder
 		for _, c := range r.Content {
-			if c.Type == "text" && c.Text != "" {
-				return c.Text, nil
+			if c.Type == "text" {
+				sb.WriteString(c.Text)
 			}
+		}
+		if sb.Len() > 0 {
+			return sb.String(), nil
 		}
 		return "", errors.New("provider response contained no text content")
 	}
@@ -933,13 +954,12 @@ func extractChatText(style authStyle, body []byte) (string, error) {
 // and surrounding prose, then normalizes the fields: a non-empty summary is
 // required, list lengths are capped, and the not-advice line is enforced.
 func parseSynthesis(text string) (*llmSynthesis, error) {
-	start := strings.IndexByte(text, '{')
-	end := strings.LastIndexByte(text, '}')
-	if start < 0 || end <= start {
+	obj, ok := firstBalancedObject(text)
+	if !ok {
 		return nil, errors.New("no JSON object in model output")
 	}
 	var syn llmSynthesis
-	if err := json.Unmarshal([]byte(text[start:end+1]), &syn); err != nil {
+	if err := json.Unmarshal([]byte(obj), &syn); err != nil {
 		return nil, errors.New("model output is not valid JSON")
 	}
 	syn.Summary = strings.TrimSpace(syn.Summary)
@@ -1055,4 +1075,40 @@ func validateModel(model string) (string, string) {
 		}
 	}
 	return model, ""
+}
+
+// firstBalancedObject returns the first balanced {...} object in s. Braces
+// inside JSON strings (including after a \" escape) do not count.
+func firstBalancedObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", false
+	}
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
