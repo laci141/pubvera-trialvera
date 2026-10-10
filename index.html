@@ -1185,6 +1185,35 @@ function exportRows(key){
   return {rows:raw.length&&raw.every(isTrialRow)?raw.map(trialExportRow):raw, raw:raw, scope:scope};
 }
 
+// ── Header labels and XLSX dates (CSV/Excel only; JSON keeps the raw keys) ──
+// The fixed trial columns already carry readable labels. Every column appended
+// after them kept its raw JSON key (sponsor_class, last_update, ...), so both
+// CSV and Excel headers go through this one function and stay identical.
+const HEADER_LABELS={sponsor_class:"Sponsor class",last_update:"Last updated",
+  first_posted:"First posted",has_results:"Has results",secondary_ids:"Secondary IDs",
+  source:"Source"};
+function humanizeHeader(key){
+  const k=String(key);
+  if(Object.prototype.hasOwnProperty.call(HEADER_LABELS,k))return HEADER_LABELS[k];
+  const s=k.replace(/_/g," ");
+  return s.charAt(0).toUpperCase()+s.slice(1);
+}
+
+// Columns whose ISO dates become real Excel dates: the labels trialExportRow
+// writes, plus the raw keys for rows that never pass through it.
+const XLSX_DATE_COLS=new Set(["Start date","Primary completion date","Completion date",
+  "start_date","primary_completion_date","completion_date","last_update","first_posted"]);
+// Only a full, real YYYY-MM-DD becomes a serial (days since 1899-12-30, from
+// Date.UTC so no timezone shift). ClinicalTrials.gov also returns YYYY-MM and
+// YYYY, which have no single correct day, so those and everything else -> null.
+function isoDateToSerial(value){
+  if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return null;
+  const y=+value.slice(0,4),m=+value.slice(5,7),d=+value.slice(8,10);
+  const t=new Date(Date.UTC(y,m-1,d));
+  if(t.getUTCFullYear()!==y||t.getUTCMonth()!==m-1||t.getUTCDate()!==d)return null;
+  return Math.round((t.getTime()-Date.UTC(1899,11,30))/86400000);
+}
+
 // ── CSV (RFC4180). Excel-safe: BOM + CRLF + explicit separator hint. ──
 // metaLine (optional) becomes a scope header row under the sep= hint, so the
 // exported file itself records that it holds a subset (e.g. "10 of 4004").
@@ -1206,7 +1235,7 @@ function toCSV(rows,metaLine){
   // the second is a human-readable scope header (e.g. "showing 10 of 4004").
   const lines=["sep=,"];
   if(metaLine)lines.push(cell(metaLine));
-  lines.push(cols.map(cell).join(","));
+  lines.push(cols.map(c=>cell(humanizeHeader(c))).join(","));
   rows.forEach(r=>lines.push(cols.map(c=>cell(r?r[c]:"")).join(",")));
   // UTF-8 BOM so Excel detects the encoding; spelled out because a literal
   // BOM character would be invisible in the source.
@@ -1275,9 +1304,10 @@ function downloadXLSX(key,filename){
   const clamp=v=>(typeof v==="string"&&v.length>EXCEL_CELL_LIMIT)
     ? v.slice(0,EXCEL_CELL_LIMIT-20)+" …[truncated]" : v;
   // Row 0 = provenance header ("showing 7 of 100"), row 1 = column header.
-  const aoa=[[exportHeader(key,rows)],cols].concat(rows.map(r=>cols.map(c=>{
+  const aoa=[[exportHeader(key,rows)],cols.map(humanizeHeader)].concat(rows.map(r=>cols.map(c=>{
     const v=r?r[c]:"";
     if(v===null||v===undefined)return "";
+    if(XLSX_DATE_COLS.has(c)){const n=isoDateToSerial(v);if(n!==null)return n;}
     if(v===true)return "Yes";
     if(v===false)return "No";
     if(Array.isArray(v))return clamp(v.map(x=>(typeof x==="object")?JSON.stringify(x):String(x)).join("; "));
@@ -1293,7 +1323,7 @@ function downloadXLSX(key,filename){
 
   // Measure each column: long free text goes left and wide, short values centre.
   const colInfo=cols.map(c=>{
-    let max=String(c).length, sum=0, cnt=0;
+    let max=humanizeHeader(c).length, sum=0, cnt=0;
     rows.forEach(r=>{const v=r?r[c]:"";const L=String(v==null?"":v).length;if(L>max)max=L;sum+=L;cnt++;});
     const avg=cnt?sum/cnt:0;
     const isLong=(max>22)||(avg>18);
@@ -1317,6 +1347,8 @@ function downloadXLSX(key,filename){
       }else{
         ws[addr].s={alignment:{vertical:"center",
           horizontal:(colInfo[C]&&colInfo[C].left)?"left":"center",wrapText:false}};
+        // aoa_to_sheet made the converted dates numeric cells; give them a date format.
+        if(XLSX_DATE_COLS.has(cols[C])&&ws[addr].t==="n")ws[addr].z="yyyy-mm-dd";
       }
     }
   }
