@@ -1285,6 +1285,33 @@ function downloadCSV(key,filename){
   triggerDownload(new Blob([text],{type:"text/csv;charset=utf-8"}),filename);
 }
 
+// ── XLSX frozen header: rows 1-2 (provenance caption + column header) ──
+const XLSX_FREEZE_PANE='<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>';
+// Pure: put the pane into the first <sheetView>; input that already has a pane
+// or has no sheetView comes back unchanged.
+function freezeHeaderXml(sheetXml){
+  if(typeof sheetXml!=="string"||/<pane\b/.test(sheetXml))return sheetXml;
+  const m=/<sheetView\b([^>]*?)(\/?)>/.exec(sheetXml);
+  if(!m)return sheetXml;
+  const repl=m[2]
+    ? "<sheetView"+m[1]+">"+XLSX_FREEZE_PANE+"</sheetView>"
+    : m[0]+XLSX_FREEZE_PANE;
+  return sheetXml.slice(0,m.index)+repl+sheetXml.slice(m.index+m[0].length);
+}
+// Unzip the finished xlsx with SheetJS's own zip handler, patch sheet1.xml, rezip.
+// Throws on anything unexpected; the caller falls back to the unpatched workbook.
+function freezeXlsxBytes(bytes){
+  const cfb=XLSX.CFB.read(bytes,{type:"array"});
+  const ent=XLSX.CFB.find(cfb,"/xl/worksheets/sheet1.xml");
+  if(!ent)throw new Error("sheet1.xml not found");
+  const xml=new TextDecoder().decode(ent.content);
+  const patched=freezeHeaderXml(xml);
+  if(patched===xml)return bytes;
+  ent.content=new TextEncoder().encode(patched);
+  ent.size=ent.content.length;
+  return XLSX.CFB.write(cfb,{fileType:"zip",type:"array"});
+}
+
 // ── XLSX: centered numbers, left-aligned long text, styled header ──
 function downloadXLSX(key,filename){
   if(!lastData[key]){alert("Run a command first.");return;}
@@ -1355,21 +1382,22 @@ function downloadXLSX(key,filename){
   ws["!cols"]=colInfo.map(ci=>({wch:ci.wch}));
   // Provenance row spans the full table width.
   if(cols.length>1)ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:cols.length-1}}];
-  // NO freeze pane, deliberately. xlsx-js-style cannot write one: measured on
-  // 1.2.0, "!freeze" (as an object or a string), "!views" with state:"frozen"
-  // and "!panes" all produce a file with no <pane> element at all. The string
-  // "!freeze" appears nowhere in the library, and its only occurrences of
-  // "pane" are an XLML *reader* case with an empty body. A line setting it
-  // therefore does nothing — and the comment that used to claim the header was
-  // frozen sent a later reader hunting a bug that did not exist, at a cost of
-  // about forty minutes. Writing a real pane means unzipping the finished
-  // xlsx, injecting <pane ySplit="2" .../> into sheet1.xml and rezipping:
-  // a browser zip library (JSZip, ~97KB on every page load) plus a regex
-  // against markup this library owns, which fails silently — or emits an
-  // unopenable file — the moment that markup shifts. Declined on that
-  // trade; the autofilter on the header row is the substitute.
+  // No ws["!freeze"] / "!views" / "!panes" here: measured on xlsx-js-style
+  // 1.2.0, none of them produces a <pane> element, so a line setting one does
+  // nothing. The pane is injected into the finished file instead (freezeXlsxBytes,
+  // via the zip handler bundled in SheetJS, no extra library). If any step of
+  // that throws, the plain workbook is downloaded exactly as before.
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Trialvera");
+  let bytes=null;
+  try{
+    bytes=freezeXlsxBytes(new Uint8Array(XLSX.write(wb,{bookType:"xlsx",type:"array"})));
+  }catch(e){bytes=null;}
+  if(bytes){
+    // same MIME type XLSX.writeFile uses
+    triggerDownload(new Blob([bytes],{type:"application/octet-stream"}),filename);
+    return;
+  }
   XLSX.writeFile(wb,filename);
 }
 
