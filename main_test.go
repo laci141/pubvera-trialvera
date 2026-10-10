@@ -136,6 +136,45 @@ func TestRelevanceGateMatchesTitleAndInterventions(t *testing.T) {
 	}
 }
 
+// trialIDOnly has an unrelated title and no conditions: the NCT ID is the only
+// field that can match an NCT query.
+const trialIDOnly = `{"id":"NCT07534098","title":"Unrelated Title","status":"RECRUITING","conditions":[],"interventions":[]}`
+
+const trialOtherID = `{"id":"NCT00000001","title":"Unrelated Title","status":"RECRUITING","conditions":[],"interventions":[]}`
+
+func TestRelevanceGateKeepsTrialMatchingNCTIDInQuery(t *testing.T) {
+	for _, q := range []string{"NCT07534098", "nct07534098"} {
+		kept, dropped, count := gateResults(t, relevanceGate(searchJSON(t, trialIDOnly), q))
+		if len(dropped) != 0 || count != 0 {
+			t.Errorf("query %q: dropped = %v, count = %d, want none", q, dropped, count)
+		}
+		if len(kept) != 1 || kept[0] != "NCT07534098" {
+			t.Errorf("query %q: kept = %v, want [NCT07534098]", q, kept)
+		}
+	}
+}
+
+func TestRelevanceGateNCTIDQueryStillDropsOtherID(t *testing.T) {
+	_, dropped, _ := gateResults(t, relevanceGate(searchJSON(t, trialOtherID), "NCT07534098"))
+	if len(dropped) != 1 || dropped[0] != "NCT00000001" {
+		t.Errorf("filtered_out = %v, want [NCT00000001]", dropped)
+	}
+}
+
+func TestRelevanceGateIDDoesNotMatchTopicQuery(t *testing.T) {
+	_, dropped, _ := gateResults(t, relevanceGate(searchJSON(t, trialIDOnly), "diabetes"))
+	if len(dropped) != 1 || dropped[0] != "NCT07534098" {
+		t.Errorf("filtered_out = %v, want [NCT07534098]", dropped)
+	}
+}
+
+func TestRelevanceGateMixedNCTIDAndTopicQuery(t *testing.T) {
+	kept, _, _ := gateResults(t, relevanceGate(searchJSON(t, trialIDOnly), "NCT07534098 diabetes"))
+	if len(kept) != 1 || kept[0] != "NCT07534098" {
+		t.Errorf("kept = %v, want [NCT07534098]", kept)
+	}
+}
+
 // ---- phase_distribution normalization ----------------------------------------
 
 // trialWithPhases builds a minimal trial row with the given phases (nil = the
