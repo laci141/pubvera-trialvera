@@ -835,11 +835,42 @@ func appendObjectFields(item json.RawMessage, fields []string) (json.RawMessage,
 	return b.Bytes(), true
 }
 
+// fillTrialRows applies the per-row fill to every object of the JSON array
+// list: a missing "phase" becomes "" and a Trial row's missing list keys become
+// [] (missingTrialListKeys). Rows are spliced, never re-encoded, so key order is
+// kept. Reports whether any row changed.
+func fillTrialRows(list []json.RawMessage) bool {
+	changed := false
+	for i, item := range list {
+		var trial map[string]json.RawMessage
+		if err := json.Unmarshal(item, &trial); err != nil {
+			continue
+		}
+		var fields []string
+		if _, has := trial["phase"]; !has {
+			fields = append(fields, `"phase":""`)
+		}
+		for _, k := range missingTrialListKeys(trial) {
+			fields = append(fields, `"`+k+`":[]`)
+		}
+		if len(fields) > 0 {
+			b, ok := appendObjectFields(item, fields)
+			if !ok {
+				continue
+			}
+			list[i] = b
+			changed = true
+		}
+	}
+	return changed
+}
+
 // normalizeTrialPhase ensures every object in the "results" (or "rows") array
 // of raw carries a "phase" key, and every Trial row its list keys
-// (missingTrialListKeys). The CLI omits the key when the field is empty
-// (omitempty); callers in Python/R get a KeyError on those rows. Best-effort:
-// any parse failure returns raw unchanged.
+// (missingTrialListKeys). The same fill is applied to "filtered_out", the rows
+// the relevance gate dropped, so one response follows one rule. The CLI omits
+// the key when the field is empty (omitempty); callers in Python/R get a
+// KeyError on those rows. Best-effort: any parse failure returns raw unchanged.
 func normalizeTrialPhase(raw []byte) []byte {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
@@ -864,25 +895,15 @@ func normalizeTrialPhase(raw []byte) []byte {
 	if err := json.Unmarshal(obj[key], &list); err != nil {
 		return raw
 	}
-	changed := false
-	for i, item := range list {
-		var trial map[string]json.RawMessage
-		if err := json.Unmarshal(item, &trial); err != nil {
-			continue
-		}
-		var fields []string
-		if _, has := trial["phase"]; !has {
-			fields = append(fields, `"phase":""`)
-		}
-		for _, k := range missingTrialListKeys(trial) {
-			fields = append(fields, `"`+k+`":[]`)
-		}
-		if len(fields) > 0 {
-			b, ok := appendObjectFields(item, fields)
-			if !ok {
-				continue
+	changed := fillTrialRows(list)
+	var filtered []json.RawMessage
+	if fo, ok := obj["filtered_out"]; ok && json.Unmarshal(fo, &filtered) == nil {
+		if fillTrialRows(filtered) {
+			newFiltered, err := json.Marshal(filtered)
+			if err != nil {
+				return raw
 			}
-			list[i] = b
+			obj["filtered_out"] = newFiltered
 			changed = true
 		}
 	}

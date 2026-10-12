@@ -500,6 +500,45 @@ func TestNormalizeTrialPhaseFillsMissingListKeys(t *testing.T) {
 	}
 }
 
+// The relevance gate moves dropped trials to "filtered_out"; those rows follow
+// the same fill rule as "results" so one response has one rule.
+func TestNormalizeTrialPhaseFillsFilteredOut(t *testing.T) {
+	full := `{"id":"NCT00000001","title":"a","phase":"PHASE2","phases":["PHASE2"],"conditions":["x"],"interventions":["y"],"countries":["India"],"secondary_ids":[]}`
+	raw := []byte(`{"results":[` + full + `],"filtered_count":1,"filtered_out":[{"id":"NCT00000002","title":"t","phases":["PHASE2"],"conditions":["x"],"interventions":["y"]}]}`)
+	got := normalizeTrialPhase(raw)
+	var out struct {
+		Results     []json.RawMessage            `json:"results"`
+		FilteredOut []map[string]json.RawMessage `json:"filtered_out"`
+	}
+	if err := json.Unmarshal(got, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.FilteredOut) != 1 {
+		t.Fatalf("want 1 filtered_out row, got %d", len(out.FilteredOut))
+	}
+	for _, k := range []string{"countries", "secondary_ids"} {
+		if v := string(out.FilteredOut[0][k]); v != "[]" {
+			t.Errorf("filtered_out[0] %q = %q, want []", k, v)
+		}
+	}
+	s := string(got)
+	iID, iTitle, iCountries := strings.Index(s, `"id":"NCT00000002"`), strings.Index(s, `"title":"t"`), strings.Index(s, `"countries":[]`)
+	if iID < 0 || iTitle < iID || iCountries < iTitle {
+		t.Errorf("filtered_out key order changed: id=%d title=%d countries=%d in %s", iID, iTitle, iCountries, s)
+	}
+	if len(out.Results) != 1 || string(out.Results[0]) != full {
+		t.Errorf("results[0] changed: %v", out.Results)
+	}
+}
+
+func TestNormalizeTrialPhaseFilteredOutCompleteIsByteIdentical(t *testing.T) {
+	row := `{"id":"NCT1","phase":"NA","phases":["NA"],"conditions":[],"interventions":[],"countries":[],"secondary_ids":[]}`
+	raw := []byte(`{"results":[` + row + `],"filtered_count":1,"filtered_out":[` + row + `]}`)
+	if got := normalizeTrialPhase(raw); !bytes.Equal(got, raw) {
+		t.Errorf("complete lists must pass through byte-identical, got %s", got)
+	}
+}
+
 func TestNormalizeTrialPhaseListKeysOnlyOnTrialRows(t *testing.T) {
 	// A row without the Trial signature ("phases") gets no list keys.
 	raw := []byte(`{"results":[{"name":"x","phase":"PHASE1"}]}`)
