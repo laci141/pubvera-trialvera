@@ -46,7 +46,7 @@ check("urldate present, YYYY-MM-DD", !!ud && /^\d{4}-\d{2}-\d{2}$/.test(ud[1]), 
 b = bib({ first_posted: "2012-10-02", last_update: "2025-03-04", status: "RECRUITING" });
 check("note has First posted", b.includes("First posted: 2012-10-02"), b);
 check("note has Last updated", b.includes("Last updated: 2025-03-04"), b);
-check("note keeps status", /note\s*=\s*\{[^}]*RECRUITING/.test(b), b);
+check("note keeps status", /note\s*=\s*\{[^}]*Status: Recruiting/.test(b), b);
 
 b = bib({});
 check("note omits dates when absent", !/First posted|Last updated/.test(b), b);
