@@ -1419,13 +1419,35 @@ function bibEsc(v){
     .trim();
 }
 
+// Registry codes -> ClinicalTrials.gov display labels. Unknown codes fall back to
+// "Sentence case with spaces"; empty stays empty so the note part is omitted.
+const PHASE_LABELS={NA:"Not Applicable",EARLY_PHASE1:"Early Phase 1",PHASE1:"Phase 1",
+  PHASE2:"Phase 2",PHASE3:"Phase 3",PHASE4:"Phase 4"};
+const STATUS_LABELS={NOT_YET_RECRUITING:"Not yet recruiting",RECRUITING:"Recruiting",
+  ENROLLING_BY_INVITATION:"Enrolling by invitation",ACTIVE_NOT_RECRUITING:"Active, not recruiting",
+  SUSPENDED:"Suspended",TERMINATED:"Terminated",COMPLETED:"Completed",WITHDRAWN:"Withdrawn",
+  UNKNOWN:"Unknown status"};
+function codeFallback(code){
+  const s=String(code).replace(/_/g," ").toLowerCase();
+  return s.charAt(0).toUpperCase()+s.slice(1);
+}
+function phaseLabel(code){
+  return String(code==null?"":code).split(/\s*[\/,]\s*/).map(p=>p.trim()).filter(Boolean)
+    .map(p=>PHASE_LABELS[p]||codeFallback(p)).join("/");
+}
+function statusLabel(code){
+  const s=String(code==null?"":code).trim();
+  return s?(STATUS_LABELS[s]||codeFallback(s)):"";
+}
+
 function toBibTeX(rows){
   const out=[];
   rows.forEach(r=>{
     const id=String(r.id||"");
     if(!/^NCT\d{8}$/.test(id))return;
     const fields=[];
-    fields.push("  title        = {"+bibEsc(r.title||"Untitled clinical trial")+"}");
+    // Double braces protect the title's capitalisation from classic BibTeX styles.
+    fields.push("  title        = {{"+bibEsc(r.title||"Untitled clinical trial")+"}}");
     const sponsor=bibEsc(r.sponsor||"");
     if(sponsor)fields.push("  author       = {{"+sponsor+"}}");
     fields.push("  howpublished = {ClinicalTrials.gov Identifier: "+id+"}");
@@ -1436,10 +1458,11 @@ function toBibTeX(rows){
     const now=new Date(),p2=n=>String(n).padStart(2,"0");
     fields.push("  urldate      = {"+now.getFullYear()+"-"+p2(now.getMonth()+1)+"-"+p2(now.getDate())+"}");
     fields.push("  url          = {https://clinicaltrials.gov/study/"+id+"}");
-    const phase=bibEsc(r.phase||(Array.isArray(r.phases)?r.phases.join("/"):""));
-    const note=[phase,bibEsc(r.status||""),
-      r.first_posted?"First posted: "+bibEsc(r.first_posted):"",
-      r.last_update?"Last updated: "+bibEsc(r.last_update):""].filter(Boolean).join(", ");
+    const phase=phaseLabel(r.phase||(Array.isArray(r.phases)?r.phases.join("/"):""));
+    const status=statusLabel(r.status||"");
+    const note=bibEsc([phase?"Phase: "+phase:"",status?"Status: "+status:"",
+      r.first_posted?"First posted: "+r.first_posted:"",
+      r.last_update?"Last updated: "+r.last_update:""].filter(Boolean).join("; "));
     if(note)fields.push("  note         = {"+note+"}");
     out.push("@misc{"+id+",\n"+fields.join(",\n")+"\n}");
   });
