@@ -6,10 +6,13 @@
 # and nothing in the image said which upstream source that binary came from.
 # The commit is now stamped on the image as the label org.pubvera.cli.commit.
 #
-# The pin is 58edea3 (CLI 2026.9.14), the same commit the other apps pin. The
-# previous pin c1b64a3 (2026.9.12) matched the old vendored binary. Between the
-# two, the CLI's non-test Go changes are the version string only (upstream
-# #2022 added tests), and the control query gave byte-identical output.
+# The pin is 926bcb7 (2026-10-11, upstream #2298: first_posted on normalized
+# trials, used by the BibTeX export). The other apps still pin 58edea3. Between
+# 58edea3 and 926bcb7, a control run of the 15 data commands this server calls
+# (old vs new binary, same inputs, back to back) gave byte-identical output for
+# 12; search, phase3 and recruiting only gained "first_posted" lines, none
+# removed. Earlier pins: 58edea3 (2026.9.14), c1b64a3 (2026.9.12, the old
+# vendored binary).
 #
 # PP_LIBRARY_COMMIT is declared before the first FROM so it is global. An ARG
 # declared after a FROM exists only in that stage; each stage that needs the
@@ -18,7 +21,7 @@
 # pubvera-recallis (measured 2026-09-24), and CI now fails on that.
 #
 # Stage 2 builds the web server for linux/amd64 from ./main.go.
-ARG PP_LIBRARY_COMMIT=58edea349ce3df8a301d4d8950119487c32604b8
+ARG PP_LIBRARY_COMMIT=926bcb7295f02bc36abaa040763c3d2f291a1606
 
 FROM golang:1.27.2-alpine AS cli-builder
 ARG PP_LIBRARY_COMMIT
