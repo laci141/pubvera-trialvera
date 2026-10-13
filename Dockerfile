@@ -7,7 +7,7 @@
 # The commit is now stamped on the image as the label org.pubvera.cli.commit.
 #
 # The pin is 8342ee9 (2026-10-13, upstream #2311: list keys always present; #2298 first_posted on normalized
-# trials, used by the BibTeX export). The other apps still pin 58edea3. Between
+# trials, used by the BibTeX export). Each app pins its own commit. Between
 # 58edea3 and 926bcb7, a control run of the 15 data commands this server calls
 # (old vs new binary, same inputs, back to back) gave byte-identical output for
 # 12; search, phase3 and recruiting only gained "first_posted" lines, none
