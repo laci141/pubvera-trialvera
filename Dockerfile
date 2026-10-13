@@ -6,7 +6,7 @@
 # and nothing in the image said which upstream source that binary came from.
 # The commit is now stamped on the image as the label org.pubvera.cli.commit.
 #
-# The pin is 926bcb7 (2026-10-11, upstream #2298: first_posted on normalized
+# The pin is 8342ee9 (2026-10-13, upstream #2311: list keys always present; #2298 first_posted on normalized
 # trials, used by the BibTeX export). The other apps still pin 58edea3. Between
 # 58edea3 and 926bcb7, a control run of the 15 data commands this server calls
 # (old vs new binary, same inputs, back to back) gave byte-identical output for
@@ -21,7 +21,7 @@
 # pubvera-recallis (measured 2026-09-24), and CI now fails on that.
 #
 # Stage 2 builds the web server for linux/amd64 from ./main.go.
-ARG PP_LIBRARY_COMMIT=926bcb7295f02bc36abaa040763c3d2f291a1606
+ARG PP_LIBRARY_COMMIT=8342ee9356fa24516a66b258ed3a321b0a6b19d2
 
 FROM golang:1.27.2-alpine AS cli-builder
 ARG PP_LIBRARY_COMMIT
