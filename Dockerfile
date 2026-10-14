@@ -21,7 +21,7 @@
 # pubvera-recallis (measured 2026-09-24), and CI now fails on that.
 #
 # Stage 2 builds the web server for linux/amd64 from ./main.go.
-ARG PP_LIBRARY_COMMIT=8342ee9356fa24516a66b258ed3a321b0a6b19d2
+ARG PP_LIBRARY_COMMIT=ed2dc468034a913f84c470d9f1339fc901683992
 
 FROM golang:1.27.2-alpine AS cli-builder
 ARG PP_LIBRARY_COMMIT
