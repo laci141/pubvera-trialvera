@@ -1228,6 +1228,9 @@ function toCSV(rows,metaLine){
     if(v===false)return "No";
     let s=Array.isArray(v)?v.map(x=>(typeof x==="object")?JSON.stringify(x):String(x)).join("; ")
       :(typeof v==="object")?JSON.stringify(v):String(v);
+    // Formula-injection guard: a cell starting with = + - @ (or their full-width
+    // forms, or tab/CR) would run as a formula in Excel; a leading ' keeps it text.
+    if(typeof v!=="number"&&!/^-?\d+(\.\d+)?$/.test(s)&&/^[ \t\r\n]*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]|^[\t\r]/.test(s)) s="'"+s;
     if(/[",\r\n]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
     return s;
   };
