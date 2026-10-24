@@ -117,6 +117,8 @@
   .card .lb{font-size:1.45rem;font-weight:600;color:var(--c)}
   .card .sub{font-size:.78rem;color:#bdbdbd;margin-top:.35rem}
 
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .card:focus-visible{outline:2px solid var(--c);outline-offset:3px}
   .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px);
     justify-content:center;align-items:center;z-index:1000;animation:fade .3s ease;padding:1rem}
   .modal.active{display:flex}
@@ -344,9 +346,12 @@
 <section class="hero">
   <p>Search, filter and analyse clinical trials — registry data from ClinicalTrials.gov, enriched with PubMed, OpenAlex &amp; FDA FAERS safety signals. Keyless and open, 30+ commands in six groups.</p>
   <div class="search-box">
+    <label for="heroQuery" class="sr-only">Disease, drug, or NCT ID</label>
     <input id="heroQuery" type="text" placeholder="Disease, drug, or NCT ID — e.g. 'diabetes' or 'NCT07437157'">
     <div class="keyrow">
+      <label for="llmKey" class="sr-only">LLM API key (optional)</label>
       <input id="llmKey" type="password" placeholder="LLM API key (optional, BYOK)" autocomplete="off">
+      <label for="llmProvider" class="sr-only">LLM provider</label>
       <select id="llmProvider">
         <optgroup label="⭐ Recommended">
           <option value="deepseek">DeepSeek — fast + cheap</option>
@@ -365,6 +370,7 @@
           <option value="xai">xAI Grok</option>
         </optgroup>
       </select>
+      <label for="llmModel" class="sr-only">Model (optional)</label>
       <input id="llmModel" type="text" placeholder="Model (optional)" autocomplete="off" list="llmModelOptions">
       <datalist id="llmModelOptions"></datalist>
     </div>
@@ -375,7 +381,7 @@
 
 <section class="bento" id="bento"></section>
 
-<div class="modal" id="modal">
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="modal-content" id="modalContent"></div>
 </div>
 
@@ -575,22 +581,50 @@ Object.entries(GROUPS).forEach(([g,cfg])=>{
   const el=document.createElement("div");
   el.className="card";el.style.setProperty("--c",cfg.color);
   el.innerHTML=`<div class="ic">${cfg.icon}</div><div class="lb">${esc(cfg.title)}</div><div class="sub">${n} commands</div>`;
+  el.setAttribute("role","button");el.setAttribute("tabindex","0");
   el.addEventListener("click",()=>openGroup(g));
+  el.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===" "){if(e.key===" ")e.preventDefault();openGroup(g);}
+  });
   bento.appendChild(el);
 });
 
 // ---- modal ----
 const modal=$("#modal"), mc=$("#modalContent");
 modal.addEventListener("click",e=>{if(e.target===modal)closeModal();});
-function closeModal(){modal.classList.remove("active");}
+let modalOpener=null;
+function closeModal(){
+  modal.classList.remove("active");
+  const o=modalOpener; modalOpener=null;
+  if(o&&document.contains(o)&&o.focus)o.focus();
+}
+// Tabbable elements inside the open modal, in DOM order.
+function modalFocusables(){
+  return Array.from(mc.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'))
+    .filter(el=>!el.disabled&&el.getClientRects().length>0);
+}
+document.addEventListener("keydown",e=>{
+  if(!modal.classList.contains("active"))return;
+  if(e.key==="Escape"){
+    // An open export menu owns Escape first (its own handler closes only the menu).
+    if(document.querySelector(".dl-menu:not([hidden])"))return;
+    e.preventDefault();closeModal();return;
+  }
+  if(e.key!=="Tab")return;
+  const items=modalFocusables();
+  if(!items.length){e.preventDefault();mc.focus();return;}
+  const first=items[0], last=items[items.length-1], a=document.activeElement;
+  if(e.shiftKey&&(a===first||!mc.contains(a))){e.preventDefault();last.focus();}
+  else if(!e.shiftKey&&(a===last||!mc.contains(a))){e.preventDefault();first.focus();}
+});
 
 function openGroup(g){
   const cfg=GROUPS[g];
   const opts=Object.entries(cfg.cmds).map(([c,d])=>`<option value="${c}">${esc(d.label)} — ${c}</option>`).join("");
   mc.style.setProperty("--c",cfg.color);
   mc.innerHTML=`
-    <div class="modal-head"><h2>${cfg.icon} ${esc(cfg.title)}</h2><button class="x" onclick="__close()">&times;</button></div>
-    <label>Command</label>
+    <div class="modal-head"><h2 id="modalTitle">${cfg.icon} ${esc(cfg.title)}</h2><button class="x" aria-label="Close" onclick="__close()">&times;</button></div>
+    <label for="cmdSel">Command</label>
     <select id="cmdSel">${opts}</select>
     <p class="cmd-desc" id="cmdDesc"></p>
     <div id="fields"></div>
@@ -601,7 +635,13 @@ function openGroup(g){
   $("#runBtn").addEventListener("click",()=>run(g,sel.value));
   renderFields(g,sel.value);
   // prefill first text field from the hero query
+  if(!modal.classList.contains("active"))modalOpener=document.activeElement;
   modal.classList.add("active");
+  // Focus the first control other than the close button: a Space keyup that
+  // opened the dialog from a tile must not land on (and click) the close button.
+  mc.setAttribute("tabindex","-1");
+  const firstCtl=modalFocusables().find(el=>!el.classList.contains("x"))||modalFocusables()[0]||mc;
+  firstCtl.focus();
 }
 window.__close=closeModal;
 
@@ -615,15 +655,15 @@ function renderFields(g,cmd){
                :`<div class="tryrow">Try:${chips}</div>`;
   };
   box.innerHTML=d.fields.map(f=>{
-    if(f.type==="limit") return `<label>${f.label} · <span id="lv">${f.def}</span></label>
+    if(f.type==="limit") return `<label for="f_limit">${f.label} · <span id="lv">${f.def}</span></label>
       <input type="range" id="f_limit" min="1" max="200" value="${f.def}" oninput="document.getElementById('lv').textContent=this.value">`;
-    if(f.type==="select") return `<label>${f.label}</label><select id="f_${f.k}">${f.opts.map(o=>`<option>${o}</option>`).join("")}</select>${f.note?`<div class="fnote">${esc(f.note)}</div>`:""}`;
+    if(f.type==="select") return `<label for="f_${f.k}">${f.label}</label><select id="f_${f.k}">${f.opts.map(o=>`<option>${o}</option>`).join("")}</select>${f.note?`<div class="fnote">${esc(f.note)}</div>`:""}`;
     // Every text field starts with a REAL value: the hero text when the field
     // is hero-linked and the hero box is non-empty, otherwise the field's
     // example — so the first "Run" always sends something valid.
     const pre = (hero && ["query","nctid","condition","term","drug","area"].includes(f.k)) ? hero : f.ph;
     const ex=EXAMPLES[cmd+"."+f.k];
-    return `<label>${f.label}</label><input type="text" id="f_${f.k}" placeholder="${esc(f.ph)}" value="${esc(pre)}">
+    return `<label for="f_${f.k}">${f.label}</label><input type="text" id="f_${f.k}" placeholder="${esc(f.ph)}" value="${esc(pre)}">
       <div class="ferr" id="e_${f.k}"></div>${ex?tryRow("f_"+f.k,ex,EX_COLS[cmd+"."+f.k]):""}`;
   }).join("");
   // compare gets pair chips that fill BOTH drug fields at once
