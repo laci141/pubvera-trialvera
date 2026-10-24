@@ -234,14 +234,28 @@
 
   /* Export suite: download buttons + quick filter (glass-panel theme) */
   .meta-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;gap:12px;flex-wrap:wrap}
-  .meta-row .meta{font-size:.82rem;color:#99a}
+  .meta-row .meta{font-size:.82rem;color:#99a;min-width:0;overflow-wrap:anywhere}
   .dl{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#cdd6ea;
     padding:4px 14px;border-radius:999px;font-size:.75rem;font-weight:600;cursor:pointer;
     transition:.2s;white-space:nowrap;flex-shrink:0}
   .dl:hover{background:rgba(255,255,255,.15);border-color:var(--c);color:#fff}
-  .dl-group{display:flex;gap:8px;flex-shrink:0;align-items:center;flex-wrap:wrap}
+  .dl-group{display:flex;gap:8px;min-width:0;max-width:100%;align-items:center;flex-wrap:wrap}
+  /* Export menu (WAI-ARIA menu button). The panel is ONE solid colour, never a
+     gradient: rgba(26,26,46,.9) is .modal-content's own #1a1a2e, the surface the
+     panel opens over. */
+  .dl-menu-wrap{position:relative;display:inline-block;margin-left:auto}
+  .dl-trigger{min-height:44px;min-width:44px}
+  .dl-trigger:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+  .dl-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:50;min-width:150px;max-width:calc(100vw - 32px);
+    padding:6px;border:1px solid rgba(255,255,255,.14);border-radius:14px;display:flex;flex-direction:column;gap:2px;
+    background:rgba(26,26,46,.9);box-shadow:0 14px 36px -12px rgba(0,0,0,.8)}
+  .dl-menu[hidden]{display:none}
+  .dl-item{display:block;width:100%;min-height:44px;text-align:left;font:inherit;font-size:.82rem;font-weight:600;
+    color:#e8eef7;background:none;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;white-space:nowrap}
+  .dl-item:hover{background:rgba(255,255,255,.14)}
+  .dl-item:focus-visible{outline:2px solid var(--c);outline-offset:-2px;background:rgba(255,255,255,.14)}
   .qfilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;
-    padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px}
+    padding:4px 14px;color:#e8eef7;font-size:.78rem;width:190px;min-width:0;max-width:100%}
   .qfilter:focus{outline:none;border-color:var(--c)}
   .phasefilter{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px 14px;color:#e8eef7;font-size:.78rem;cursor:pointer}
   .phasefilter:focus{outline:none;border-color:var(--c)}
@@ -287,7 +301,13 @@
        example grid overflowed a phone-width modal. Here: as many columns
        as fit. Desktop keeps the fixed --cols count from EX_COLS. */
     .trygrid{grid-template-columns:repeat(auto-fill,minmax(6.5rem,1fr))}
+    /* The toolbar drops below the count text and fills the width; the filter
+       and the phase select take their own full rows and the Export trigger goes
+       to the next line, right-aligned so the panel (right:0) opens inside the
+       viewport. */
     .meta-row{flex-direction:column;align-items:flex-start}
+    .dl-group{width:100%}
+    .qfilter,.phasefilter{flex:1 1 100%;width:auto;min-width:0}
   }
 </style>
 </head>
@@ -1563,18 +1583,29 @@ function triggerDownload(blob,filename){
 }
 
 // ── metaRow: the download/filter toolbar above every result body ──
+// The four downloads sit in ONE Export menu (see the Export menu block below).
+// Panel ids come from a counter that lives on metaRow itself, so tests that
+// extract metaRow alone still run.
 function metaRow(text,key,filename){
   const csvName=String(filename).replace(/\.json$/i,".csv");
   const xlsxName=String(filename).replace(/\.json$/i,".xlsx");
   const bibName=String(filename).replace(/\.json$/i,".bib");
+  metaRow.menuSeq=(metaRow.menuSeq||0)+1;
+  const menuId="dl-menu-"+metaRow.menuSeq;
+  const item=(fmt,name,label,title)=>'<button type="button" class="dl-item" role="menuitem"'+
+    (title?' title="'+esc(title)+'"':'')+' data-dl="'+fmt+'" data-key="'+esc(key)+'" data-filename="'+esc(name)+'">'+label+'</button>';
   return '<div class="meta-row"><span class="meta">'+esc(text)+'<span class="qcount"></span></span>'+
     '<span class="dl-group">'+
     '<input class="qfilter" type="text" placeholder="🔍 Filter results…">'+
     '<select class="phasefilter" title="Filter by phase"><option value="">All phases</option><option value="EARLY_PHASE1">Early Phase 1</option><option value="PHASE1">Phase 1</option><option value="PHASE2">Phase 2</option><option value="PHASE3">Phase 3</option><option value="PHASE4">Phase 4</option><option value="NA">NA</option></select>'+
-    '<button class="dl" title="BibTeX @misc citations (NCT-keyed)" onclick="downloadBibTeX(\''+key+'\',\''+bibName+'\')">⬇ BibTeX</button>'+
-    '<button class="dl" onclick="downloadXLSX(\''+key+'\',\''+xlsxName+'\')">⬇ Excel</button>'+
-    '<button class="dl" onclick="downloadCSV(\''+key+'\',\''+csvName+'\')">⬇ CSV</button>'+
-    '<button class="dl" onclick="downloadJSON(\''+key+'\',\''+filename+'\')">⬇ JSON</button>'+
+    '<span class="dl-menu-wrap">'+
+    '<button type="button" class="dl dl-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="'+menuId+'">⬇ Export ▾</button>'+
+    '<span class="dl-menu" role="menu" id="'+menuId+'" hidden>'+
+    item("xlsx",xlsxName,"Excel")+
+    item("csv",csvName,"CSV")+
+    item("json",filename,"JSON")+
+    item("bib",bibName,"BibTeX","BibTeX @misc citations (NCT-keyed)")+
+    '</span></span>'+
     '</span></div>';
 }
 
@@ -1584,6 +1615,71 @@ function resultMetaRow(cmd){
   const n=Array.isArray(d.rows)?d.rows.length:0;
   return metaRow((n?n+" rows":"1 result")+" · "+cmd,cmd,"trialvera-"+cmd+".json");
 }
+
+// ── Export menu (WAI-ARIA APG menu button). Every close path ends in
+// closeExportMenus(opener), so hidden, aria-expanded and focus cannot drift
+// apart. The opener is passed explicitly: WebKit does not focus a button on
+// mouse click. Items run their download through a fixed map, never through a
+// name taken from the markup. ──
+const EXPORT_DL={xlsx:downloadXLSX,csv:downloadCSV,json:downloadJSON,bib:downloadBibTeX};
+function closeExportMenus(opener){
+  document.querySelectorAll(".dl-menu:not([hidden])").forEach(m=>{
+    m.hidden=true;
+    const t=document.querySelector('[aria-controls="'+m.id+'"]');
+    if(t)t.setAttribute("aria-expanded","false");
+  });
+  if(opener)opener.focus();
+}
+function toggleExportMenu(btn){
+  const menu=document.getElementById(btn.getAttribute("aria-controls"));
+  if(!menu)return;
+  const wasOpen=!menu.hidden;
+  closeExportMenus(null); // at most one menu open
+  if(wasOpen){btn.focus();return;}
+  menu.hidden=false;
+  btn.setAttribute("aria-expanded","true");
+  const first=menu.querySelector(".dl-item");
+  if(first)first.focus();
+}
+document.addEventListener("click",e=>{
+  const t=e.target;
+  if(!t||!t.closest)return;
+  const item=t.closest(".dl-item");
+  if(item){
+    const fn=EXPORT_DL[item.dataset.dl];
+    if(fn)fn(item.dataset.key,item.dataset.filename);
+    closeExportMenus(document.querySelector('[aria-controls="'+item.closest(".dl-menu").id+'"]'));
+    return;
+  }
+  const trigger=t.closest(".dl-trigger");
+  if(trigger){toggleExportMenu(trigger);return;}
+  // Untrusted clicks are ignored: triggerDownload() clicks a synthetic <a>.
+  if(e.isTrusted&&!t.closest(".dl-menu-wrap"))closeExportMenus(null);
+});
+document.addEventListener("keydown",e=>{
+  const t=e.target;
+  if(!t||!t.matches)return;
+  // Enter, Space and ArrowDown on the trigger open the menu with the first item
+  // focused; preventDefault stops the button's own click for Enter and Space.
+  if(t.matches(".dl-trigger")&&(e.key==="ArrowDown"||e.key==="Enter"||e.key===" ")){
+    e.preventDefault();
+    if(e.key!=="ArrowDown"||t.getAttribute("aria-expanded")!=="true")toggleExportMenu(t);
+    return;
+  }
+  const menu=document.querySelector(".dl-menu:not([hidden])");
+  if(!menu)return;
+  const opener=document.querySelector('[aria-controls="'+menu.id+'"]');
+  if(e.key==="Escape"){e.preventDefault();closeExportMenus(opener);return;}
+  if(!menu.contains(t))return;
+  const items=Array.from(menu.querySelectorAll(".dl-item"));
+  const i=items.indexOf(document.activeElement);
+  if(e.key==="ArrowDown"){e.preventDefault();items[(i+1)%items.length].focus();}
+  else if(e.key==="ArrowUp"){e.preventDefault();items[(i-1+items.length)%items.length].focus();}
+  else if(e.key==="Home"){e.preventDefault();items[0].focus();}
+  else if(e.key==="End"){e.preventDefault();items[items.length-1].focus();}
+  else if(e.key==="Tab")closeExportMenus(opener); // focus lands on the trigger, then Tab moves on
+});
+// ── end Export menu
 
 // ── Filtering: the text box and the phase dropdown COMPOSE — a row is shown
 // only when it passes both. Both handlers call the same applyFilters(scope)
