@@ -610,3 +610,27 @@ func TestNormalizeTrialPhaseSpliceShapes(t *testing.T) {
 		t.Errorf("row needing nothing must stay byte-identical, got %s", got)
 	}
 }
+
+// sync and import mutate server-side state and sit behind forward_auth
+// kind=base (no role check), so they must not be routable (OWASP API5).
+func TestDataManagementRejectsSyncAndImport(t *testing.T) {
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		handleGroup(rec, httptest.NewRequest(http.MethodPost, "/api/data-management", strings.NewReader(body)), "data-management")
+		return rec
+	}
+	for _, body := range []string{`{"command":"sync"}`, `{"command":"import","resource":"studies"}`} {
+		rec := post(body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown command") {
+			t.Errorf("%s: got %d %s, want 400 unknown command", body, rec.Code, rec.Body.String())
+		}
+	}
+	rec := post(`{"command":"export","resource":"studies"}`)
+	if rec.Code == http.StatusBadRequest && strings.Contains(rec.Body.String(), "unknown command") {
+		t.Errorf("export must stay allowed, got %d %s", rec.Code, rec.Body.String())
+	}
+	got := sortedKeys(groups["data-management"])
+	if strings.Join(got, ",") != "export,export-fhir" {
+		t.Errorf("data-management commands = %v, want [export export-fhir]", got)
+	}
+}

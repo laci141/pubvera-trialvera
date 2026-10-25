@@ -164,17 +164,10 @@ var groups = map[string]map[string]cmdSpec{
 		}},
 	},
 	"data-management": {
-		// sync/import/export mutate the local SQLite DB or read server-side
-		// files; they are routable but intended for local/admin use.
-		"sync": {build: func(r request) ([]string, error) {
-			if s := firstNonEmpty(r.Query, r.Term, r.Condition); s != "" {
-				return []string{s}, nil
-			}
-			return []string{}, nil
-		}},
+		// sync and import were removed from the public API (OWASP API5: no
+		// role check behind forward_auth kind=base); run them locally with the CLI.
 		"export":      {build: func(r request) ([]string, error) { return req1("resource", r.Resource) }, limit: true, format: true},
 		"export-fhir": {build: func(r request) ([]string, error) { return req1("nct-id", target(r)) }, format: true},
-		"import":      {build: func(r request) ([]string, error) { return req1("resource", r.Resource) }},
 	},
 	"system": {
 		"health":                     {build: noArgs},
@@ -353,7 +346,7 @@ func preflight(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // noLLMGroups / noLLMCmds mark where the LLM synthesis is skipped even with a
-// key: data-management (sync/import/export/export-fhir) moves data around and
+// key: data-management (export/export-fhir) moves data around and
 // tail polls a stream — a summary adds nothing over the raw output there.
 var noLLMGroups = map[string]bool{"data-management": true}
 var noLLMCmds = map[string]bool{"tail": true}
