@@ -1,4 +1,4 @@
-// BYOK key storage test (B1-B11): the LLM key lives in sessionStorage by
+// BYOK key storage test (B1-B12): the LLM key lives in sessionStorage by
 // default, moves to localStorage only behind the "Remember key on this device"
 // box, and "Forget key" clears it from both storages.
 //
@@ -192,6 +192,27 @@ check("B11 .keyopts checkbox >= 24px square; row span min-height >= 52px with al
   spanRules.some(b => toPx(cssProp(b, "min-height")) >= 52 && cssProp(b, "align-items") === "center") &&
   (labelRules.some(b => cssProp(b, "padding").split(/\s+/).some(v => toPx(v) > 0)) ||
     spanRules.some(b => { const v = cssProp(b, "padding").split(/\s+/); return toPx(v.length > 1 ? v[1] : v[0]) >= 8; })));
+
+// B12: the whole Remember row except the checkbox is the label, so a tap on
+// the side padding toggles the box. The effective .keyopts label values (last
+// declaration wins) are text-align:left, flex-grow >= 1 and right padding
+// >= 8px; no .keyopts span rule carries horizontal padding.
+const lastProp = (rules, n) => rules.map(b => cssProp(b, n)).filter(Boolean).pop() || "";
+function padSides(b) {
+  const v = cssProp(b, "padding").split(/\s+/).filter(Boolean);
+  const right = v.length ? (v.length > 1 ? v[1] : v[0]) : "";
+  const left = v.length ? (v.length > 3 ? v[3] : v.length > 1 ? v[1] : v[0]) : "";
+  return { right: cssProp(b, "padding-right") || right, left: cssProp(b, "padding-left") || left };
+}
+const labelGrow = (() => {
+  const g = lastProp(labelRules, "flex-grow"), f = lastProp(labelRules, "flex");
+  return parseFloat(g || (f.split(/\s+/)[0] || "0")) || 0;
+})();
+check("B12 .keyopts label: text-align:left, flex-grow >= 1, right padding >= 8px; .keyopts span: no horizontal padding",
+  lastProp(labelRules, "text-align") === "left" &&
+  labelGrow >= 1 &&
+  labelRules.some(b => toPx(padSides(b).right) >= 8) &&
+  spanRules.every(b => { const p = padSides(b); return toPx(p.left) === 0 && toPx(p.right) === 0; }));
 
 if (ran === 0) {
   console.error("FAIL: zero checks ran - refusing to pass silently");
