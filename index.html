@@ -124,11 +124,15 @@
   /* The Remember row is a touch target as well: a 24px box and a 52px row, the
      same height as Forget key. The label (for=llmRemember) fills the row height,
      so a tap anywhere on the text line toggles the box. Same selector weight as
-     the reset above and later in the file, so the size wins over width:auto. */
+     the reset above and later in the file, so the size wins over width:auto.
+     The side padding sits on the label, not on the span, and the label grows to
+     fill the row, so every tap in the row except on the box itself hits the
+     label. text-align:left undoes the centred text inherited from .hero. */
   .search-box .keyopts input[type=checkbox]{width:24px;height:24px;flex:0 0 auto}
-  .keyopts span{min-height:52px;display:inline-flex;align-items:center;gap:.6rem;padding:0 12px;
+  .keyopts span{min-height:52px;display:inline-flex;align-items:center;gap:0;padding:0;
     box-sizing:border-box;max-width:100%;cursor:pointer}
-  .keyopts label{min-height:52px;display:inline-flex;align-items:center;font-size:.85rem}
+  .keyopts label{min-height:52px;display:inline-flex;align-items:center;font-size:.85rem;flex:1 1 auto;
+    text-align:left;justify-content:flex-start;padding:0 12px 0 10px}
   @media(max-width:480px){.keyopts span{flex:1 1 100%}}
 
   .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:2.4rem;padding:1.25rem 2rem 3rem;max-width:1200px;margin:0 auto}
