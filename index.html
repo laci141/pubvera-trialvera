@@ -429,8 +429,8 @@ const GROUPS = {
     velocity:{label:"Research velocity",desc:"How fast a disease area's trials are growing.",fields:[T("area","Disease area","oncology")]},
   }},
   // tail (endless polling) and data-management sync/import (local SQLite
-  // writes) are hidden here: pointless on an ephemeral-disk web deploy. The
-  // server still routes them for local/admin use.
+  // writes) are not offered here: pointless on an ephemeral-disk web deploy,
+  // and the server no longer routes sync/import (removed, OWASP API5).
   "recruiting-watch":{icon:"📋",title:"Recruiting & Watch",color:"#ffab4c",cmds:{
     recruiting:{label:"Recruiting trials",desc:"Trials currently recruiting for a condition.",fields:[T("condition","Condition","heart disease"),LIM(10)]},
     watch:{label:"Watch a term",desc:"Save a term to watch for new trials.",fields:[T("term","Term","glp-1")]},
