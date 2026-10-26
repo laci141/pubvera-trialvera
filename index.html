@@ -107,6 +107,29 @@
     border-radius:.5rem;padding:.6rem;color:#e0e0e0;font-size:.9rem}
   .keyrow select option{background:#1a1a2e}
   .keyhint{font-size:.7rem;color:#707070;margin-top:.5rem}
+  /* BYOK key options: the Remember box and Forget key share one wrapping row.
+     The .search-box input rule above would stretch the checkbox to full width
+     with 1rem padding, so it is reset here. Forget key reuses .auth-btn. */
+  .keyopts{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem 1rem;margin-top:.6rem}
+  .keyopts span{display:inline-flex;align-items:center;gap:.4rem}
+  .keyopts label{margin:0;font-size:.8rem;cursor:pointer}
+  /* Forget key is a touch target: at least 52px tall with centred text. Scoped
+     to the key row so the header Sign in / Sign out buttons keep .auth-btn as is.
+     The selector outranks the 768px .auth-btn override, so the size holds on a
+     phone. Under 480px it takes the full row; border-box keeps it inside. */
+  .keyopts .auth-btn{min-height:52px;padding:0 20px;display:inline-flex;align-items:center;
+    justify-content:center;box-sizing:border-box;font-size:.85rem}
+  @media(max-width:480px){.keyopts .auth-btn{flex:1 1 100%;max-width:100%}}
+  .search-box .keyopts input[type=checkbox]{width:auto;padding:0;margin:0;accent-color:#2fd6a6;cursor:pointer}
+  /* The Remember row is a touch target as well: a 24px box and a 52px row, the
+     same height as Forget key. The label (for=llmRemember) fills the row height,
+     so a tap anywhere on the text line toggles the box. Same selector weight as
+     the reset above and later in the file, so the size wins over width:auto. */
+  .search-box .keyopts input[type=checkbox]{width:24px;height:24px;flex:0 0 auto}
+  .keyopts span{min-height:52px;display:inline-flex;align-items:center;gap:.6rem;padding:0 12px;
+    box-sizing:border-box;max-width:100%;cursor:pointer}
+  .keyopts label{min-height:52px;display:inline-flex;align-items:center;font-size:.85rem}
+  @media(max-width:480px){.keyopts span{flex:1 1 100%}}
 
   .bento{display:grid;grid-template-columns:repeat(3,1fr);gap:2.4rem;padding:1.25rem 2rem 3rem;max-width:1200px;margin:0 auto}
   .card{background:rgba(255,255,255,.085);border:1px solid rgba(255,255,255,.16);border-radius:1rem;padding:1.8rem;
@@ -375,7 +398,11 @@
       <datalist id="llmModelOptions"></datalist>
     </div>
     <div class="model-hint" id="modelHint"></div>
-    <div class="keyhint">Your key is stored only in this browser (localStorage) and sent per-request via the <code>X-LLM-Key</code> header. Never logged or persisted server-side. With a key, an AI synthesis panel (summary · key points · caveats) is added on top of every result — informational only, not medical advice.</div>
+    <div class="keyopts">
+      <span><input id="llmRemember" type="checkbox"><label for="llmRemember">Remember key on this device</label></span>
+      <button type="button" class="auth-btn" id="llmForget">Forget key</button>
+    </div>
+    <div class="keyhint">By default your key is kept only for this tab and cleared when the tab closes; Remember keeps it in this browser until you press Forget key. With a key, your query and the result data are sent to the provider you choose (via the <code>X-LLM-Key</code> header) and an AI synthesis panel is added to every result. The key is never logged or stored on our server. Informational only, not medical advice.</div>
   </div>
 </section>
 
@@ -564,13 +591,48 @@ function applyDefaultModel(){
   localStorage.setItem("ct_model","");
 }
 
-// ---- localStorage BYOK ----
-(function load(){const k=localStorage.getItem("ct_key");if(k)$("#llmKey").value=k;
+// ---- BYOK key storage ----
+// The key lives in sessionStorage by default: it survives a reload and is gone
+// when the tab closes. Only the opt-in "Remember key on this device" box puts
+// it in localStorage (with ct_remember=1). Provider and model are not secrets
+// and stay in localStorage. Every storage call goes through byokTry: storage
+// can throw (private mode, blocked site data), and then the key just lives in
+// the input for this page. ls/ss are parameters so a Node test can pass fakes.
+function byokTry(f,fallback){try{return f();}catch(e){return fallback;}}
+function byokStore(key,remember,ls,ss){
+  if(remember){
+    byokTry(()=>{if(key)ls.setItem("ct_key",key);else ls.removeItem("ct_key");});
+    byokTry(()=>ls.setItem("ct_remember","1"));
+    byokTry(()=>ss.removeItem("ct_key"));
+  }else{
+    byokTry(()=>ls.removeItem("ct_key"));
+    byokTry(()=>ls.removeItem("ct_remember"));
+    byokTry(()=>{if(key)ss.setItem("ct_key",key);else ss.removeItem("ct_key");});
+  }
+}
+// A localStorage ct_key saved before the Remember box existed counts as
+// remembered, so returning users keep their key and see the box checked.
+function byokLoad(ls,ss){
+  const saved=byokTry(()=>ls.getItem("ct_key"),null);
+  if(saved){byokTry(()=>ls.setItem("ct_remember","1"));return {key:saved,remember:true};}
+  return {key:byokTry(()=>ss.getItem("ct_key"),null)||"",
+    remember:byokTry(()=>ls.getItem("ct_remember"),null)==="1"};
+}
+function byokForget(ls,ss){
+  byokTry(()=>ls.removeItem("ct_key"));
+  byokTry(()=>ls.removeItem("ct_remember"));
+  byokTry(()=>ss.removeItem("ct_key"));
+}
+// Reading window.localStorage itself can throw, so each is read once here.
+const byokLS=byokTry(()=>window.localStorage,null), byokSS=byokTry(()=>window.sessionStorage,null);
+(function load(){const b=byokLoad(byokLS,byokSS);if(b.key)$("#llmKey").value=b.key;$("#llmRemember").checked=b.remember;
   const p=localStorage.getItem("ct_provider");if(p)$("#llmProvider").value=p;
   const m=localStorage.getItem("ct_model");
   if(m)$("#llmModel").value=m;else applyDefaultModel();
   updateModelHint();fillModelOptions();})();
-$("#llmKey").addEventListener("input",e=>localStorage.setItem("ct_key",e.target.value));
+$("#llmKey").addEventListener("input",e=>byokStore(e.target.value,$("#llmRemember").checked,byokLS,byokSS));
+$("#llmRemember").addEventListener("change",e=>byokStore($("#llmKey").value,e.target.checked,byokLS,byokSS));
+$("#llmForget").addEventListener("click",()=>{$("#llmKey").value="";$("#llmRemember").checked=false;byokForget(byokLS,byokSS);});
 $("#llmProvider").addEventListener("change",e=>{localStorage.setItem("ct_provider",e.target.value);applyDefaultModel();updateModelHint();fillModelOptions();});
 $("#llmModel").addEventListener("input",e=>localStorage.setItem("ct_model",e.target.value));
 
