@@ -218,14 +218,22 @@ const (
 	srvIdleTimeout = 120 * time.Second
 )
 
-func main() {
+// newMux is the route table main() serves; the tests use it too, so a route
+// missing here fails a test instead of only the deployed server.
+func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleRoot)
 	for group := range groups {
 		g := group
 		mux.HandleFunc("/api/"+g, func(w http.ResponseWriter, r *http.Request) { handleGroup(w, r, g) })
 	}
+	// Outside /api/: Caddy forward_auth covers /api/* only. The exact pattern
+	// wins over the "/" catch-all.
+	mux.HandleFunc("/version", handleVersion)
+	return mux
+}
 
+func main() {
 	addr := "127.0.0.1:8091"
 	if a := strings.TrimSpace(os.Getenv("ADDR")); a != "" {
 		addr = a
@@ -234,7 +242,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           newMux(),
 		ReadHeaderTimeout: srvReadHeaderTimeout,
 		ReadTimeout:       srvReadTimeout,
 		WriteTimeout:      srvWriteTimeout,

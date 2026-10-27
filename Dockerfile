@@ -29,10 +29,14 @@ RUN CGO_ENABLED=0 go install -trimpath \
     github.com/mvanhorn/printing-press-library/library/health/clinical-trials/cmd/clinical-trials-pp-cli@${PP_LIBRARY_COMMIT}
 
 FROM golang:1.27.2-alpine AS web-builder
+ARG APP_VERSION=dev
 WORKDIR /build
 COPY go.mod ./
 COPY *.go ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/server .
+# APP_VERSION is the CalVer version from the release workflow, "dev" for any
+# other build. -X names the variable main.appVersion: for package main the
+# linker uses "main", not the module path.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.appVersion=${APP_VERSION}" -o /out/server .
 
 # Pinned to the 3.24 branch instead of latest, like Recallis, Retractis,
 # Grantvera and Bibliovera. The running image reported 3.24.2 in
@@ -48,9 +52,12 @@ COPY --from=cli-builder /go/bin/clinical-trials-pp-cli ./bin/clinical-trials-pp-
 COPY index.html ./index.html
 RUN chmod +x ./bin/clinical-trials-pp-cli
 
-# The upstream commit the CLI was built from, readable with docker inspect.
+# The upstream commit the CLI was built from and the CalVer version the server
+# reports on /version, both readable with docker inspect.
 ARG PP_LIBRARY_COMMIT
+ARG APP_VERSION=dev
 LABEL org.pubvera.cli.commit=${PP_LIBRARY_COMMIT}
+LABEL org.opencontainers.image.version=${APP_VERSION}
 
 ENV CLI_BIN=/app/bin/clinical-trials-pp-cli
 # The server binds 127.0.0.1:8091 unless ADDR or PORT says otherwise. It runs on

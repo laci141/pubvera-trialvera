@@ -419,6 +419,7 @@
 <footer>
   Pubvera · Trialvera × 6-group API × BYOK · <a href="https://github.com/laci141/pubvera-trialvera" target="_blank" rel="noopener">GitHub</a>
   · Powered by <a href="https://github.com/mvanhorn/printing-press-library" target="_blank" rel="noopener">Printing Press Library</a>
+  <span id="app-version"></span>
 </footer>
 
 <div class="legal">
@@ -1985,6 +1986,18 @@ async function initAuth() {
 }
 
 initAuth().catch(() => { /* stay in unauthenticated mode */ });
+</script>
+<script>
+(function () {
+  fetch('/version', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((d) => {
+      if (d && typeof d.version === 'string' && d.version) {
+        document.getElementById('app-version').textContent = 'Trialvera v' + d.version;
+      }
+    })
+    .catch(() => { /* leave the footer without a version */ });
+})();
 </script>
 </body>
 </html>
