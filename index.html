@@ -690,7 +690,7 @@ function openGroup(g){
   const opts=Object.entries(cfg.cmds).map(([c,d])=>`<option value="${c}">${esc(d.label)} — ${c}</option>`).join("");
   mc.style.setProperty("--c",cfg.color);
   mc.innerHTML=`
-    <div class="modal-head"><h2 id="modalTitle">${cfg.icon} ${esc(cfg.title)}</h2><button class="x" aria-label="Close" onclick="__close()">&times;</button></div>
+    <div class="modal-head"><h2 id="modalTitle">${cfg.icon} ${esc(cfg.title)}</h2><button class="x" aria-label="Close" data-action="close">&times;</button></div>
     <label for="cmdSel">Command</label>
     <select id="cmdSel">${opts}</select>
     <p class="cmd-desc" id="cmdDesc"></p>
@@ -711,19 +711,36 @@ function openGroup(g){
   firstCtl.focus();
 }
 window.__close=closeModal;
+// The modal's built HTML carries data-action instead of inline on*= handlers
+// (a CSP with script-src-attr 'none' blocks those): one delegated listener per
+// event on #modalContent covers the close button, the Try chips, the sign-in
+// button of the 401 card, the Clear buttons and the limit slider readout.
+mc.addEventListener("click",e=>{
+  const b=e.target.closest("[data-action]");
+  if(!b)return;
+  const a=b.dataset.action;
+  if(a==="close")closeModal();
+  else if(a==="fill")window.__fill(b.dataset.target,b.textContent);
+  else if(a==="fillPair")window.__fillPair(b.dataset.a,b.dataset.b);
+  else if(a==="signIn")pubveraSignIn();
+  else if(a==="clear")document.getElementById("res").innerHTML="";
+});
+mc.addEventListener("input",e=>{
+  if(e.target.id==="f_limit")document.getElementById("lv").textContent=e.target.value;
+});
 
 function renderFields(g,cmd){
   const d=GROUPS[g].cmds[cmd], box=$("#fields");
   const hero=$("#heroQuery").value.trim();
   const descEl=$("#cmdDesc"); if(descEl) descEl.textContent=d.desc||"";
   const tryRow=(id,ex,cols)=>{
-    const chips=ex.map(x=>`<button type="button" class="chip ex" onclick="__fill('${id}',this.textContent)">${esc(x)}</button>`).join("");
+    const chips=ex.map(x=>`<button type="button" class="chip ex" data-action="fill" data-target="${esc(id)}">${esc(x)}</button>`).join("");
     return cols?`<div class="tryrow">Try:<div class="trygrid" style="--cols:${cols}">${chips}</div></div>`
                :`<div class="tryrow">Try:${chips}</div>`;
   };
   box.innerHTML=d.fields.map(f=>{
     if(f.type==="limit") return `<label for="f_limit">${f.label} · <span id="lv">${f.def}</span></label>
-      <input type="range" id="f_limit" min="1" max="200" value="${f.def}" oninput="document.getElementById('lv').textContent=this.value">`;
+      <input type="range" id="f_limit" min="1" max="200" value="${f.def}">`;
     if(f.type==="select") return `<label for="f_${f.k}">${f.label}</label><select id="f_${f.k}">${f.opts.map(o=>`<option>${o}</option>`).join("")}</select>${f.note?`<div class="fnote">${esc(f.note)}</div>`:""}`;
     // Every text field starts with a REAL value: the hero text when the field
     // is hero-linked and the hero box is non-empty, otherwise the field's
@@ -735,7 +752,7 @@ function renderFields(g,cmd){
   }).join("");
   // compare gets pair chips that fill BOTH drug fields at once
   if(cmd==="compare") box.innerHTML+=`<div class="tryrow">Try:${COMPARE_EX.map(p=>
-    `<button type="button" class="chip ex" onclick="__fillPair('${p[0]}','${p[1]}')">${p[0]} vs ${p[1]}</button>`).join("")}</div>`;
+    `<button type="button" class="chip ex" data-action="fillPair" data-a="${esc(p[0])}" data-b="${esc(p[1])}">${p[0]} vs ${p[1]}</button>`).join("")}</div>`;
   if(!d.fields.length) box.innerHTML=`<p style="color:#888;margin-top:.6rem">No inputs required.</p>`;
 }
 
@@ -785,7 +802,8 @@ async function httpError(r){
 }
 
 // Bridge to the module script at the end of this file: the sign-in button
-// inside a 401 error card is inline HTML, so it needs a global to call.
+// inside a 401 error card is built HTML (data-action="signIn"), so the
+// delegated listener on #modalContent needs a function to call.
 function pubveraSignIn(){ if(window.pubveraAuth) window.pubveraAuth.signIn(); }
 
 // resets_at arrives as an ISO timestamp; show it in the reader's own locale and
@@ -812,7 +830,7 @@ function errorHTML(e){
     // The raw error ("missing/invalid token") tells the user nothing they can
     // act on, and the remedy is always the same, so it is not shown.
     const btn=(window.pubveraAuth&&window.pubveraAuth.enabled)
-      ? '<button type="button" class="auth-btn auth-btn-primary" onclick="pubveraSignIn()">Sign in with Google</button>'
+      ? '<button type="button" class="auth-btn auth-btn-primary" data-action="signIn">Sign in with Google</button>'
       : "";
     return '<div class="errcard"><h4>Sign-in required</h4>'+
       '<p>Please sign in to run this analysis.</p>'+btn+'</div>';
@@ -841,7 +859,7 @@ function errorHTML(e){
       '<p>Please try again in a moment — nothing is wrong with your request.</p>'+
       (why?'<p class="fnote">'+esc(why)+'</p>':"")+'</div>';
   }
-  const clear=st?'<button class="backbtn" onclick="document.getElementById(\'res\').innerHTML=\'\'">Clear</button>':"";
+  const clear=st?'<button class="backbtn" data-action="clear">Clear</button>':"";
   return '<div class="rcard"><h3 class="err">Error</h3><p>'+
     esc(e&&e.message?e.message:"Unknown error")+'</p>'+clear+'</div>';
 }
@@ -901,7 +919,7 @@ async function run(g,cmd){
     const data=await r.json();
     lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,
       query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
-    res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" onclick="document.getElementById('res').innerHTML=''">Clear</button>`;
+    res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" data-action="clear">Clear</button>`;
     initSortIndicators(res);
     registerView(cmd,domViewProvider(cmd));
     refreshQCount(res);
