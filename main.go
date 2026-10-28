@@ -23,6 +23,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -314,9 +315,21 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(browserConfig{SupabaseURL: supaURL, SupabaseAnonKey: supaKey, Providers: browserProviders()})
 	case "/", "/index.html":
 		if data, err := os.ReadFile("index.html"); err == nil {
+			// Fail closed: without a fresh nonce there is no page and no policy.
+			// Return here: falling through would answer the health check's "ok".
+			var nb [16]byte
+			if _, err := nonceRandRead(nb[:]); err != nil {
+				log.Printf("csp nonce: %v", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			nonce := base64.RawStdEncoding.EncodeToString(nb[:])
+			data = bytes.ReplaceAll(data, []byte(nonceMarker), []byte(nonce))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			// Revalidate on every load so a deploy is visible immediately.
-			w.Header().Set("Cache-Control", "no-cache")
+			// Never stored, so a deploy is visible on the next load and a cached
+			// copy cannot replay one nonce to every visitor.
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
 			_, _ = w.Write(data)
 			return
 		}
