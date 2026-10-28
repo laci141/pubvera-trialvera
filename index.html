@@ -6,7 +6,7 @@
 <meta name="description" content="Trialvera — search, filter and analyse clinical trials. Registry data from ClinicalTrials.gov, keyless and open. Part of the Pubvera research suite.">
 <title>Trialvera — Clinical Trial Search &amp; Analysis</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a12'/%3E%3Cg fill='%2300d4ff'%3E%3Crect x='6' y='11' width='42' height='8.1' rx='3.7'/%3E%3Crect x='11.3' y='24' width='31.3' height='8.1' rx='3.7'/%3E%3Crect x='16.7' y='37' width='20.7' height='8.1' rx='3.7'/%3E%3Crect x='22' y='50' width='10' height='8.1' rx='3.7'/%3E%3Crect x='51' y='25.3' width='7' height='5.5' rx='2.75' opacity='0.55'/%3E%3Crect x='51' y='38.3' width='7' height='5.5' rx='2.75' opacity='0.70'/%3E%3Crect x='51' y='51.3' width='7' height='5.5' rx='2.75' opacity='0.88'/%3E%3C/g%3E%3C/svg%3E">
-<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js" integrity="sha384-OUW9euuUyxyHcAhTqbhI+Iyb8LMssXt/cpz0yXhs9UWG2/R/uaWdakx/4cfww7Vb" crossorigin="anonymous"></script>
+<script nonce="__CSP_NONCE__" src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js" integrity="sha384-OUW9euuUyxyHcAhTqbhI+Iyb8LMssXt/cpz0yXhs9UWG2/R/uaWdakx/4cfww7Vb" crossorigin="anonymous"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -429,7 +429,7 @@
   always verify against the official registry record before making any decision.
 </div>
 
-<script>
+<script nonce="__CSP_NONCE__">
 "use strict";
 const API_BASE = ""; // same-origin (served by the Go server on :8091)
 
@@ -1919,7 +1919,7 @@ document.addEventListener("click",e=>{
      environment variables are not set — Supabase is never loaded at all and the
      page runs unauthenticated: no sign-in UI, no Authorization header,
      everything else unchanged, BYOK included. -->
-<script type="module">
+<script nonce="__CSP_NONCE__" type="module">
 const bar     = document.getElementById('authBar');
 const emailEl = document.getElementById('authEmail');
 const inBtn   = document.getElementById('authSignInBtn');
@@ -2005,7 +2005,7 @@ async function initAuth() {
 
 initAuth().catch(() => { /* stay in unauthenticated mode */ });
 </script>
-<script>
+<script nonce="__CSP_NONCE__">
 (function () {
   fetch('/version', { cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : Promise.reject()))
