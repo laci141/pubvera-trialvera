@@ -230,6 +230,24 @@
   .trygrid .chip.ex{width:100%;text-align:center}
   /* muted note under a select (e.g. export's single "studies" resource) */
   .fnote{font-size:.78rem;color:#888;margin-top:.3rem}
+  /* Former inline style attributes of the built result HTML (a CSP with
+     style-src-attr 'none' drops those). Same declarations as before; a doubled
+     class where an existing rule would otherwise outrank the old inline value
+     (.rcard padding, .rcard h3 font-size). Dynamic values (--cols, --p/--sc,
+     badge colours) are set through CSSOM by applyTryCols / applyScoreRing /
+     applyBadgeColors in the script. */
+  .u-empty{color:#888;margin-top:.6rem}
+  .u-rhead.u-rhead{padding:.7rem 1rem}
+  .u-score-row{display:flex;gap:1rem;align-items:center}
+  .u-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+  .u-side-h4{margin:.7rem 0 0;font-size:.9rem}
+  .u-factors{margin-top:.6rem}
+  .u-badge{border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600;white-space:nowrap}
+  .u-badge-results{background:#2fd6a634;color:#2fd6a6;border:1px solid #2fd6a655;border-radius:999px;
+    padding:2px 8px;font-size:.72rem;font-weight:600}
+  .u-muted{color:#888}
+  .u-more{color:#888;font-size:.8rem}
+  .u-nested-h3.u-nested-h3{margin-top:.8rem;font-size:.95rem}
 
   /* AI synthesis panel (glass card at the top of the results) */
   .ai-panel{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-left:4px solid #00d4ff;
@@ -729,13 +747,48 @@ mc.addEventListener("input",e=>{
   if(e.target.id==="f_limit")document.getElementById("lv").textContent=e.target.value;
 });
 
+// CSP style S0: built HTML carries no inline style attribute (style-src-attr 'none'
+// would drop it). Dynamic values ride on data-* attributes and are set through
+// CSSOM right after the innerHTML assignment, scoped to the container that was
+// just rendered. Only validated values are applied: a finite number for --cols
+// and --p, a #rrggbb colour (badges also take #rgb, colour only, see below).
+const HEX6=/^#[0-9a-fA-F]{6}$/;
+function finiteNum(v){if(v==null||String(v).trim()==="")return null;
+  const n=Number(v);return Number.isFinite(n)?n:null;}
+function isColor(v){return typeof v==="string"&&(HEX6.test(v)||/^#[0-9a-fA-F]{3}$/.test(v));}
+function applyTryCols(scope){
+  scope.querySelectorAll(".trygrid[data-cols]").forEach(el=>{
+    const n=finiteNum(el.dataset.cols);
+    if(n!==null&&n>0)el.style.setProperty("--cols",String(n));
+  });
+}
+function applyScoreRing(scope){
+  scope.querySelectorAll(".score[data-p]").forEach(el=>{
+    const p=finiteNum(el.dataset.p),sc=el.dataset.sc;
+    if(p!==null)el.style.setProperty("--p",String(p));
+    if(typeof sc==="string"&&HEX6.test(sc))el.style.setProperty("--sc",sc);
+  });
+}
+// The old inline value was background:c22;color:c;border:1px solid c55. With a
+// 3-digit colour (#888, #aaa) the browser dropped the background and the whole
+// border declaration as invalid and kept only the colour, so #rgb applies the
+// colour alone: the look stays exactly as it was.
+function applyBadgeColors(scope){
+  scope.querySelectorAll(".u-badge[data-color]").forEach(el=>{
+    const c=el.dataset.color;
+    if(!isColor(c))return;
+    el.style.color=c;
+    if(HEX6.test(c)){el.style.background=c+"22";el.style.border="1px solid "+c+"55";}
+  });
+}
+
 function renderFields(g,cmd){
   const d=GROUPS[g].cmds[cmd], box=$("#fields");
   const hero=$("#heroQuery").value.trim();
   const descEl=$("#cmdDesc"); if(descEl) descEl.textContent=d.desc||"";
   const tryRow=(id,ex,cols)=>{
     const chips=ex.map(x=>`<button type="button" class="chip ex" data-action="fill" data-target="${esc(id)}">${esc(x)}</button>`).join("");
-    return cols?`<div class="tryrow">Try:<div class="trygrid" style="--cols:${cols}">${chips}</div></div>`
+    return cols?`<div class="tryrow">Try:<div class="trygrid" data-cols="${cols}">${chips}</div></div>`
                :`<div class="tryrow">Try:${chips}</div>`;
   };
   box.innerHTML=d.fields.map(f=>{
@@ -753,7 +806,8 @@ function renderFields(g,cmd){
   // compare gets pair chips that fill BOTH drug fields at once
   if(cmd==="compare") box.innerHTML+=`<div class="tryrow">Try:${COMPARE_EX.map(p=>
     `<button type="button" class="chip ex" data-action="fillPair" data-a="${esc(p[0])}" data-b="${esc(p[1])}">${p[0]} vs ${p[1]}</button>`).join("")}</div>`;
-  if(!d.fields.length) box.innerHTML=`<p style="color:#888;margin-top:.6rem">No inputs required.</p>`;
+  if(!d.fields.length) box.innerHTML=`<p class="u-empty">No inputs required.</p>`;
+  applyTryCols(box);
 }
 
 // Inline message for a required field left empty — no request is fired.
@@ -920,6 +974,8 @@ async function run(g,cmd){
     lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,
       query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
     res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" data-action="clear">Clear</button>`;
+    applyScoreRing(res);
+    applyBadgeColors(res);
     initSortIndicators(res);
     registerView(cmd,domViewProvider(cmd));
     refreshQCount(res);
@@ -929,7 +985,7 @@ async function run(g,cmd){
 // ---- renderers: a few specific shapes + a robust generic fallback ----
 function renderResult(g,cmd,payload){
   const r=payload.result!=null?payload.result:payload;
-  let head=`<div class="rcard" style="padding:.7rem 1rem"><div class="chips">
+  let head=`<div class="rcard u-rhead"><div class="chips">
      <span class="chip">group <b>${esc(payload.group||g)}</b></span>
      <span class="chip">command <b>${esc(payload.command||cmd)}</b></span>
      <span class="chip">source <b>${esc(payload.llm_source||payload.source||"keyless")}</b></span></div></div>`;
@@ -973,8 +1029,8 @@ function renderBody(r,main){
     const pc=Math.max(0,Math.min(100,Math.round(r.score*100)));
     const col=r.score>=0.66?"#ff6b6b":r.score>=0.33?"#ffab4c":"#2fd6a6";
     return `<div class="rcard"><h3>${nctLink(r.title||r.id)||esc(r.title||r.id||"Risk")}</h3>
-      <div style="display:flex;gap:1rem;align-items:center">
-        <div class="score" style="--p:${pc};--sc:${col}"><span>${(Math.round(r.score*100)/100)}</span></div>
+      <div class="u-score-row">
+        <div class="score" data-p="${pc}" data-sc="${col}"><span>${(Math.round(r.score*100)/100)}</span></div>
         <div><div class="chips">
           <span class="chip">level <b>${esc(r.level)}</b></span>
           ${r.status?`<span class="chip">status <b>${esc(r.status)}</b></span>`:""}
@@ -982,7 +1038,7 @@ function renderBody(r,main){
         </div></div></div>${factorList(r.factors,main)}${rawDetails(r)}</div>`;
   }
   // compare side-by-side
-  if(r.drug_a&&r.drug_b) return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+  if(r.drug_a&&r.drug_b) return `<div class="u-compare-grid">
       ${sideCard(r.drug_a)}${sideCard(r.drug_b)}</div>`+rawDetails(r);
   // trials/results table (with the relevance-filter note when present)
   const arr=r.results||r.trials||r.sources||null;
@@ -1012,7 +1068,7 @@ function sideCard(x){return `<div class="rcard compare-side"><h3>${esc(x.name||x
 function breakdowns(o){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length&&labelCountPair(v))
     .map(([k,v])=>{const [lk,ck]=labelCountPair(v);
       const h=k.replace(/_/g," "),head=h.charAt(0).toUpperCase()+h.slice(1);
-      return `<h4 style="margin:.7rem 0 0;font-size:.9rem">${esc(head)}</h4>
+      return `<h4 class="u-side-h4">${esc(head)}</h4>
         <ul class="breakdown">`+v.map(e=>`<li><span>${esc(String(e[lk]))}</span><b>${esc(String(e[ck]))}</b></li>`).join("")+`</ul>`;
     }).join("");}
 // The counts above are a sample, and the sample can shrink without warning: a
@@ -1057,7 +1113,7 @@ function phaseNote(o){
 }
 function factorList(f,main){if(!Array.isArray(f)||!f.length)return"";
   const tag=i=>f===main?` data-ri="${i}"`:"";
-  return `<ul class="li" style="margin-top:.6rem">`+f.map((x,i)=>`<li${tag(i)}>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
+  return `<ul class="li u-factors">`+f.map((x,i)=>`<li${tag(i)}>${esc(typeof x==="object"?(x.name||x.factor||JSON.stringify(x))+(x.detail?" — "+x.detail:""):x)}</li>`).join("")+`</ul>`;}
 function scalarChips(o){const c=Object.entries(o).filter(([k,v])=>v!=null&&typeof v!=="object")
     .map(([k,v])=>`<span class="chip">${esc(k)} <b>${nctLink(v)||urlLink(v)||esc(String(v).slice(0,60))}</b></span>`).join("");
   return c?`<div class="chips">${c}</div>`:"";}
@@ -1076,15 +1132,15 @@ function statusBadge(s){
     COMPLETED:"#888",TERMINATED:"#ff6b6b",WITHDRAWN:"#ff6b6b",
     UNKNOWN:"#aaa",ACTIVE_NOT_RECRUITING:"#ffab4c"};
   const c=colors[s]||"#aaa";
-  return '<span style="background:'+c+'22;color:'+c+';border:1px solid '+c+'55;border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600;white-space:nowrap">'+esc(s.replace(/_/g," "))+'</span>';
+  return '<span class="u-badge" data-color="'+c+'">'+esc(s.replace(/_/g," "))+'</span>';
 }
 function resultsBadge(v){
   return v===true
-    ?'<span style="background:#2fd6a634;color:#2fd6a6;border:1px solid #2fd6a655;border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600">&#10003; Results</span>'
+    ?'<span class="u-badge-results">&#10003; Results</span>'
     :"";
 }
 function objTable(arr,main){
-  if(!arr.length) return `<p style="color:#888">Empty.</p>`;
+  if(!arr.length) return `<p class="u-muted">Empty.</p>`;
   if(typeof arr[0]!=="object") return `<ul class="li">`+arr.map(x=>`<li>${nctLink(x)||urlLink(x)||esc(x)}</li>`).join("")+`</ul>`;
   const cols=Array.from(new Set(arr.flatMap(o=>Object.keys(o)))).filter(k=>typeof (arr[0][k])!=="object").slice(0,6);
   // The exportable array is rendered IN FULL (WYSIWYG: what's on screen is
@@ -1095,10 +1151,10 @@ function objTable(arr,main){
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
   const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td>${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
-     ${arr.length>shown.length?`<p style="color:#888;font-size:.8rem">…and ${arr.length-shown.length} more</p>`:""}`;
+     ${arr.length>shown.length?`<p class="u-more">…and ${arr.length-shown.length} more</p>`:""}`;
 }
 function nestedArrays(o,main){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length)
-    .map(([k,v])=>`<h3 style="margin-top:.8rem;font-size:.95rem">${esc(k.replace(/_/g," "))}</h3>${objTable(v,main)}`).join("");}
+    .map(([k,v])=>`<h3 class="u-nested-h3">${esc(k.replace(/_/g," "))}</h3>${objTable(v,main)}`).join("");}
 function rawDetails(r){return `<details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r,null,2))}</pre></details>`;}
 
 // ═══════════════════════ Export suite (CSV · Excel · BibTeX · JSON) ═══════════════════════
