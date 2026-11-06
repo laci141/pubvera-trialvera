@@ -27,14 +27,15 @@ if (!/<script\b/.test(raw)) {
   console.error("FAIL: no <script> found in index.html - refusing to pass silently");
   process.exit(1);
 }
-const styleStart = raw.indexOf("<style>");
+const styleOpen = /<style\b[^>]*>/.exec(raw);
+const styleStart = styleOpen ? styleOpen.index : -1;
 const styleEnd = raw.indexOf("</style>");
 if (styleStart < 0 || styleEnd < styleStart) {
   console.error("FAIL: no <style> block found in index.html - refusing to pass silently");
   process.exit(1);
 }
 const html = raw.replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, " "));
-const css = raw.slice(styleStart + "<style>".length, styleEnd).replace(/\/\*[\s\S]*?\*\//g, "");
+const css = raw.slice(styleStart + styleOpen[0].length, styleEnd).replace(/\/\*[\s\S]*?\*\//g, "");
 const lineOf = i => html.slice(0, i).split("\n").length;
 
 let ran = 0;
