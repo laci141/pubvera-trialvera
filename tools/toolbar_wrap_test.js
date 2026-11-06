@@ -25,10 +25,11 @@ function refuse(what) {
   process.exit(1);
 }
 
-const styleStart = html.indexOf("<style>");
+const styleOpen = /<style\b[^>]*>/.exec(html);
+const styleStart = styleOpen ? styleOpen.index : -1;
 const styleEnd = html.indexOf("</style>");
 if (styleStart < 0 || styleEnd < styleStart) refuse("the <style> block");
-const style = html.slice(styleStart + "<style>".length, styleEnd).replace(/\/\*[^]*?\*\//g, "");
+const style = html.slice(styleStart + styleOpen[0].length, styleEnd).replace(/\/\*[^]*?\*\//g, "");
 
 // Bodies of every @media block whose head matches headRe (brace-matched), plus
 // the CSS left without them.

@@ -153,7 +153,7 @@ check("B9 no localStorage.setItem(\"ct_key\" anywhere; ls.setItem(\"ct_key\" onl
 // #llmForget) makes it a touch target: min-height (or height) >= 52px (rem/em
 // at 16px), centred text (inline-flex/flex + align-items:center) and
 // box-sizing:border-box. The global .auth-btn rule is not accepted.
-const css = ((/<style>([\s\S]*?)<\/style>/.exec(html) || ["", ""])[1]).replace(/\/\*[\s\S]*?\*\//g, "");
+const css = ((/<style\b[^>]*>([\s\S]*?)<\/style>/.exec(html) || ["", ""])[1]).replace(/\/\*[\s\S]*?\*\//g, "");
 function toPx(v) {
   const m = /^([\d.]+)(px|rem|em)$/.exec((v || "").trim());
   return m ? parseFloat(m[1]) * (m[2] === "px" ? 1 : 16) : 0;
