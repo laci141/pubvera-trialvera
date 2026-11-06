@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
@@ -21,8 +22,7 @@ func wantPolicy(nonce string) string {
 }
 
 // The header names and the marker are spelled out so a renamed constant cannot
-// agree with itself. Report-Only has no production constant any more; the
-// tests check that it is never sent.
+// agree with itself. Report-Only carries connect-src alone (PR A of 2).
 const (
 	reportOnlyHeader = "Content-Security-Policy-Report-Only"
 	enforcingHeader  = "Content-Security-Policy"
@@ -110,16 +110,31 @@ func TestCSPHeaderIsEnforcedWithExactPolicy(t *testing.T) {
 	}
 }
 
-// TestCSPIndexSendsOnlyTheEnforcingHeader checks the raw header lists:
-// exactly one enforcing policy (scripts and styles) and no Report-Only policy.
-func TestCSPIndexSendsOnlyTheEnforcingHeader(t *testing.T) {
+// TestCSPIndexSendsEnforcingAndConnectSrcReportOnly checks the raw header lists:
+// exactly one enforcing policy (scripts and styles), exactly one Report-Only
+// policy that holds connect-src only (connect-src PR A of 2), and the
+// Reporting-Endpoints header its report-to names.
+func TestCSPIndexSendsEnforcingAndConnectSrcReportOnly(t *testing.T) {
 	for _, path := range []string{"/", "/index.html"} {
 		nonce, _, h := indexNonce(t, path)
 		if got := h.Values(enforcingHeader); len(got) != 1 || got[0] != wantPolicy(nonce) {
 			t.Errorf("GET %s: %s = %q, want exactly [%q]", path, enforcingHeader, got, wantPolicy(nonce))
 		}
-		if got := h.Values(reportOnlyHeader); len(got) != 0 {
-			t.Errorf("GET %s: %s = %q, want none", path, reportOnlyHeader, got)
+		ro := h.Values(reportOnlyHeader)
+		if len(ro) != 1 {
+			t.Errorf("GET %s: %s = %q, want exactly one", path, reportOnlyHeader, ro)
+		} else {
+			if !strings.HasPrefix(ro[0], "connect-src 'self'") {
+				t.Errorf("GET %s: %s = %q, want it to start with connect-src 'self'", path, reportOnlyHeader, ro[0])
+			}
+			for _, bad := range []string{"script-src", "style-src", "nonce-"} {
+				if strings.Contains(ro[0], bad) {
+					t.Errorf("GET %s: %s = %q, must not contain %q", path, reportOnlyHeader, ro[0], bad)
+				}
+			}
+		}
+		if got, want := h.Values("Reporting-Endpoints"), `csp="/csp-report"`; len(got) != 1 || got[0] != want {
+			t.Errorf("GET %s: Reporting-Endpoints = %q, want exactly [%q]", path, got, want)
 		}
 	}
 }
@@ -249,6 +264,15 @@ func TestCSPOnlyOnTheIndexPage(t *testing.T) {
 			if got := rec.Header().Get(name); got != "" {
 				t.Errorf("GET %s: %s = %q, want none", path, name, got)
 			}
+		}
+	}
+	// /csp-report through the route table: the collector answers GET with 405
+	// and carries no policy of its own.
+	rec := httptest.NewRecorder()
+	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+	for _, name := range []string{reportOnlyHeader, enforcingHeader, "Reporting-Endpoints"} {
+		if got := rec.Header().Get(name); got != "" {
+			t.Errorf("GET /csp-report: %s = %q, want none", name, got)
 		}
 	}
 }

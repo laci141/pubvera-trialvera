@@ -231,6 +231,7 @@ func newMux() *http.ServeMux {
 	// Outside /api/: Caddy forward_auth covers /api/* only. The exact pattern
 	// wins over the "/" catch-all.
 	mux.HandleFunc("/version", handleVersion)
+	mux.HandleFunc("/csp-report", handleCSPReport)
 	return mux
 }
 
@@ -303,11 +304,11 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		// valid answer that puts the page into unauthenticated mode, which is what
 		// keeps local development and the current deployment working until the
 		// environment is set.
-		supaURL := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
-		supaKey := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
-		if supaURL == "" || supaKey == "" {
-			supaURL, supaKey = "", ""
-		}
+		//
+		// supabaseConfig (csp_report.go) keeps the old rule (TrimSpace both, and
+		// both empty when either is) and is the same source as the Report-Only
+		// connect-src origin on the index page.
+		supaURL, supaKey, _ := supabaseConfig()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		// Never cache: a stale key surviving a key rotation would be hard to
 		// diagnose from the browser side.
@@ -330,6 +331,11 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 			// copy cannot replay one nonce to every visitor.
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
+			// connect-src PR A of 2: Report-Only, next to the unchanged
+			// enforcing header; violations go to POST /csp-report.
+			_, _, origin := supabaseConfig()
+			w.Header().Set(cspReportOnlyHeaderName, cspConnectSrcReportOnly(origin))
+			w.Header().Set("Reporting-Endpoints", `csp="/csp-report"`)
 			_, _ = w.Write(data)
 			return
 		}
