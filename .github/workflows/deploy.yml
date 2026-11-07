@@ -237,6 +237,7 @@ jobs:
         with:
           name: trialvera-image
           if-no-files-found: error
+          retention-days: 1
           path: |
             ${{ runner.temp }}/trialvera-image.tar
             ${{ runner.temp }}/iid.txt
