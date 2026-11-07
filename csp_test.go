@@ -22,12 +22,16 @@ func wantPolicy(nonce string) string {
 }
 
 // The header names and the marker are spelled out so a renamed constant cannot
-// agree with itself. Report-Only carries connect-src alone (PR A of 2).
+// agree with itself. reportOnlyHeader is the forbidden name: since connect-src
+// moved into the enforcing header, no response may carry a Report-Only policy.
 const (
 	reportOnlyHeader = "Content-Security-Policy-Report-Only"
 	enforcingHeader  = "Content-Security-Policy"
 	nonceMarkerText  = "__CSP_NONCE__"
 )
+
+// The connect-src tail of the enforcing header without a Supabase origin.
+const wantConnectSrcSelf = "; connect-src 'self'; report-to csp; report-uri /csp-report"
 
 // index.html has 4 <script> tags: the external xlsx-js-style bundle, two
 // classic inline scripts and one module.
@@ -101,37 +105,31 @@ func TestCSPHeaderNonceMatchesEveryBodyNonce(t *testing.T) {
 }
 
 func TestCSPHeaderIsEnforcedWithExactPolicy(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
 	nonce, _, h := indexNonce(t, "/")
-	if got := h.Get(enforcingHeader); got != wantPolicy(nonce) {
-		t.Errorf("%s = %q, want %q", enforcingHeader, got, wantPolicy(nonce))
+	if got, want := h.Get(enforcingHeader), wantPolicy(nonce)+wantConnectSrcSelf; got != want {
+		t.Errorf("%s = %q, want %q", enforcingHeader, got, want)
 	}
 	if cspHeaderName != enforcingHeader {
 		t.Errorf("cspHeaderName = %q, want %q", cspHeaderName, enforcingHeader)
 	}
 }
 
-// TestCSPIndexSendsEnforcingAndConnectSrcReportOnly checks the raw header lists:
-// exactly one enforcing policy (scripts and styles), exactly one Report-Only
-// policy that holds connect-src only (connect-src PR A of 2), and the
-// Reporting-Endpoints header its report-to names.
-func TestCSPIndexSendsEnforcingAndConnectSrcReportOnly(t *testing.T) {
+// TestCSPIndexSendsOneEnforcingHeaderWithConnectSrc checks the raw header
+// lists: exactly one enforcing policy (scripts, styles and connect-src with its
+// report directives), no Report-Only policy, and the Reporting-Endpoints header
+// its report-to names.
+func TestCSPIndexSendsOneEnforcingHeaderWithConnectSrc(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
 	for _, path := range []string{"/", "/index.html"} {
 		nonce, _, h := indexNonce(t, path)
-		if got := h.Values(enforcingHeader); len(got) != 1 || got[0] != wantPolicy(nonce) {
-			t.Errorf("GET %s: %s = %q, want exactly [%q]", path, enforcingHeader, got, wantPolicy(nonce))
+		if got, want := h.Values(enforcingHeader), wantPolicy(nonce)+wantConnectSrcSelf; len(got) != 1 || got[0] != want {
+			t.Errorf("GET %s: %s = %q, want exactly [%q]", path, enforcingHeader, got, want)
 		}
-		ro := h.Values(reportOnlyHeader)
-		if len(ro) != 1 {
-			t.Errorf("GET %s: %s = %q, want exactly one", path, reportOnlyHeader, ro)
-		} else {
-			if !strings.HasPrefix(ro[0], "connect-src 'self'") {
-				t.Errorf("GET %s: %s = %q, want it to start with connect-src 'self'", path, reportOnlyHeader, ro[0])
-			}
-			for _, bad := range []string{"script-src", "style-src", "nonce-"} {
-				if strings.Contains(ro[0], bad) {
-					t.Errorf("GET %s: %s = %q, must not contain %q", path, reportOnlyHeader, ro[0], bad)
-				}
-			}
+		if ro := h.Values(reportOnlyHeader); len(ro) != 0 {
+			t.Errorf("GET %s: %s = %q, want it absent", path, reportOnlyHeader, ro)
 		}
 		if got, want := h.Values("Reporting-Endpoints"), `csp="/csp-report"`; len(got) != 1 || got[0] != want {
 			t.Errorf("GET %s: Reporting-Endpoints = %q, want exactly [%q]", path, got, want)

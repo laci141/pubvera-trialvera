@@ -306,7 +306,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		// environment is set.
 		//
 		// supabaseConfig (csp_report.go) keeps the old rule (TrimSpace both, and
-		// both empty when either is) and is the same source as the Report-Only
+		// both empty when either is) and is the same source as the enforcing
 		// connect-src origin on the index page.
 		supaURL, supaKey, _ := supabaseConfig()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -330,11 +330,10 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 			// Never stored, so a deploy is visible on the next load and a cached
 			// copy cannot replay one nonce to every visitor.
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce))
-			// connect-src PR A of 2: Report-Only, next to the unchanged
-			// enforcing header; violations go to POST /csp-report.
+			// One enforcing header: scripts, styles and connect-src; violations
+			// go to POST /csp-report.
 			_, _, origin := supabaseConfig()
-			w.Header().Set(cspReportOnlyHeaderName, cspConnectSrcReportOnly(origin))
+			w.Header().Set(cspHeaderName, contentSecurityPolicy(nonce)+cspConnectSrc(origin))
 			w.Header().Set("Reporting-Endpoints", `csp="/csp-report"`)
 			_, _ = w.Write(data)
 			return

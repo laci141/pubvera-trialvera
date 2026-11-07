@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// connect-src, PR A of 2 (Report-Only): the collector tests are ported from
+// connect-src, enforced: the collector tests are ported from
 // Recallis's csp_report_test.go with identical behaviour. Collector requests go
 // through newMux, which also proves the /csp-report route is registered; index
 // requests use getRoot (handleRoot), like csp_test.go.
@@ -206,7 +206,7 @@ func TestCSPReportFloodCap(t *testing.T) {
 	}
 }
 
-// --- Trialvera: supabaseConfig, the Report-Only connect-src and /config.json ---
+// --- Trialvera: supabaseConfig, the enforcing connect-src and /config.json ---
 
 func TestSupabaseConfig(t *testing.T) {
 	for _, tc := range []struct {
@@ -234,54 +234,52 @@ func TestSupabaseConfig(t *testing.T) {
 	}
 }
 
-func TestCSPConnectSrcReportOnlyLiteral(t *testing.T) {
-	if got, want := cspConnectSrcReportOnly(""), "connect-src 'self'; report-to csp; report-uri /csp-report"; got != want {
-		t.Errorf("cspConnectSrcReportOnly(\"\") = %q, want %q", got, want)
+func TestCSPConnectSrcLiteral(t *testing.T) {
+	if got, want := cspConnectSrc(""), "; connect-src 'self'; report-to csp; report-uri /csp-report"; got != want {
+		t.Errorf("cspConnectSrc(\"\") = %q, want %q", got, want)
 	}
-	if got, want := cspConnectSrcReportOnly("https://abc.supabase.co"), "connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report"; got != want {
-		t.Errorf("cspConnectSrcReportOnly(origin) = %q, want %q", got, want)
-	}
-	if cspReportOnlyHeaderName != reportOnlyHeader {
-		t.Errorf("cspReportOnlyHeaderName = %q, want %q", cspReportOnlyHeaderName, reportOnlyHeader)
+	if got, want := cspConnectSrc("https://abc.supabase.co"), "; connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report"; got != want {
+		t.Errorf("cspConnectSrc(origin) = %q, want %q", got, want)
 	}
 }
 
-// checkIndexReportOnly fetches / and checks exactly one Report-Only header equal
-// to the literal want, Reporting-Endpoints, and the enforcing header unchanged.
-func checkIndexReportOnly(t *testing.T, want string) {
+// checkIndexEnforcingConnectSrc fetches / and checks exactly one enforcing
+// header equal to the policy plus the literal tail, no Report-Only header, and
+// Reporting-Endpoints.
+func checkIndexEnforcingConnectSrc(t *testing.T, tail string) {
 	t.Helper()
 	nonce, _, h := indexNonce(t, "/")
-	if got := h.Values(reportOnlyHeader); len(got) != 1 || got[0] != want {
-		t.Errorf("GET /: %s = %q, want exactly [%q]", reportOnlyHeader, got, want)
+	if got := h.Values(enforcingHeader); len(got) != 1 || got[0] != wantPolicy(nonce)+tail {
+		t.Errorf("GET /: %s = %q, want exactly [%q]", enforcingHeader, got, wantPolicy(nonce)+tail)
+	}
+	if got := h.Values(reportOnlyHeader); len(got) != 0 {
+		t.Errorf("GET /: %s = %q, want it absent", reportOnlyHeader, got)
 	}
 	if got, want := h.Values("Reporting-Endpoints"), `csp="/csp-report"`; len(got) != 1 || got[0] != want {
 		t.Errorf("GET /: Reporting-Endpoints = %q, want exactly [%q]", got, want)
 	}
-	if got := h.Values(enforcingHeader); len(got) != 1 || got[0] != wantPolicy(nonce) {
-		t.Errorf("GET /: %s = %q, want exactly [%q]", enforcingHeader, got, wantPolicy(nonce))
-	}
 }
 
-func TestIndexReportOnlyConnectSrcWithSupabase(t *testing.T) {
+func TestIndexEnforcesConnectSrcWithSupabase(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "https://abc.supabase.co")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "pk_test_123")
-	checkIndexReportOnly(t, "connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report")
+	checkIndexEnforcingConnectSrc(t, "; connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report")
 }
 
-func TestIndexReportOnlyConnectSrcWithoutSupabase(t *testing.T) {
+func TestIndexEnforcesConnectSrcWithoutSupabase(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "")
-	checkIndexReportOnly(t, "connect-src 'self'; report-to csp; report-uri /csp-report")
+	checkIndexEnforcingConnectSrc(t, "; connect-src 'self'; report-to csp; report-uri /csp-report")
 }
 
-// The page connects to the URL /config.json hands it; the Report-Only header
+// The page connects to the URL /config.json hands it; the enforcing header
 // must allow exactly that URL's origin. Whitespace around the values is the
 // case where a handler reading the environment on its own would disagree.
-func TestConfigJSONAgreesWithReportOnlyHeader(t *testing.T) {
-	for _, tc := range []struct{ envURL, envKey, wantURL, wantRO string }{
-		{" https://abc.supabase.co ", " pk_test_123 ", "https://abc.supabase.co", "connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report"},
-		{"https://abc.supabase.co", "", "", "connect-src 'self'; report-to csp; report-uri /csp-report"},
-		{"", "", "", "connect-src 'self'; report-to csp; report-uri /csp-report"},
+func TestConfigJSONAgreesWithEnforcingHeader(t *testing.T) {
+	for _, tc := range []struct{ envURL, envKey, wantURL, wantTail string }{
+		{" https://abc.supabase.co ", " pk_test_123 ", "https://abc.supabase.co", "; connect-src 'self' https://abc.supabase.co; report-to csp; report-uri /csp-report"},
+		{"https://abc.supabase.co", "", "", "; connect-src 'self'; report-to csp; report-uri /csp-report"},
+		{"", "", "", "; connect-src 'self'; report-to csp; report-uri /csp-report"},
 	} {
 		t.Setenv("SUPABASE_URL", tc.envURL)
 		t.Setenv("SUPABASE_PUBLISHABLE_KEY", tc.envKey)
@@ -295,12 +293,16 @@ func TestConfigJSONAgreesWithReportOnlyHeader(t *testing.T) {
 			t.Errorf("env %q: /config.json supabase_url = %q, want %q", tc.envURL, cfg.SupabaseURL, tc.wantURL)
 		}
 
-		ro := getRoot(t, "/").Header().Get(reportOnlyHeader)
-		if ro != tc.wantRO {
-			t.Errorf("env %q: %s = %q, want %q", tc.envURL, reportOnlyHeader, ro, tc.wantRO)
+		h := getRoot(t, "/").Header()
+		csp := h.Get(enforcingHeader)
+		if m := cspNonceRE.FindStringSubmatch(csp); m == nil || csp != wantPolicy(m[1])+tc.wantTail {
+			t.Errorf("env %q: %s = %q, want the policy ending %q", tc.envURL, enforcingHeader, csp, tc.wantTail)
 		}
-		if cfg.SupabaseURL != "" && !strings.Contains(ro, " "+cfg.SupabaseURL+";") {
-			t.Errorf("env %q: header %q does not allow the /config.json url %q", tc.envURL, ro, cfg.SupabaseURL)
+		if ro := h.Values(reportOnlyHeader); len(ro) != 0 {
+			t.Errorf("env %q: %s = %q, want it absent", tc.envURL, reportOnlyHeader, ro)
+		}
+		if cfg.SupabaseURL != "" && !strings.Contains(csp, " "+cfg.SupabaseURL+";") {
+			t.Errorf("env %q: header %q does not allow the /config.json url %q", tc.envURL, csp, cfg.SupabaseURL)
 		}
 	}
 }
