@@ -11,10 +11,9 @@ import "crypto/rand"
 // enforcing policy names that nonce in style-src. A <style> without the nonce
 // and any style= attribute are blocked.
 //
-// connect-src PR A of 2: this enforcing policy does not change. The index page
-// also sends a separate Content-Security-Policy-Report-Only header with
-// connect-src alone (cspConnectSrcReportOnly, csp_report.go), reported to
-// POST /csp-report; PR B will enforce it.
+// connect-src: the index response appends cspConnectSrc (csp_report.go) to
+// this policy in the same enforcing header, so a connection outside connect-src
+// is blocked and reported to POST /csp-report.
 const (
 	nonceMarker   = "__CSP_NONCE__"
 	cspHeaderName = "Content-Security-Policy"
