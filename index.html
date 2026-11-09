@@ -770,7 +770,7 @@ function applyScoreRing(scope){
   });
 }
 // The old inline value was background:c22;color:c;border:1px solid c55. With a
-// 3-digit colour (#888, #aaa) the browser dropped the background and the whole
+// 3-digit colour (e.g. #888) the browser dropped the background and the whole
 // border declaration as invalid and kept only the colour, so #rgb applies the
 // colour alone: the look stays exactly as it was.
 function applyBadgeColors(scope){
@@ -869,6 +869,9 @@ function resetsAtText(v){
     :t.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"});
 }
 
+// Every card is role="alert": #res is not a live region (it also receives whole
+// result tables, which must not be read out), so without it a screen reader user
+// hears nothing when a command fails.
 // Error markup for a failed command. 401/403/503 come from the auth and quota
 // layer in front of the API and each one means something different to the user;
 // every other failure keeps the previous behaviour — the red one-line .err card,
@@ -877,7 +880,7 @@ function errorHTML(e){
   const st=e&&e.status, d=(e&&e.data)||{};
   if(st===401&&window.pubveraAuth&&window.pubveraAuth.unavailable){
     // The Supabase script did not load, so a sign-in prompt could not work.
-    return '<div class="errcard"><h4>Sign-in required</h4>'+
+    return '<div class="errcard" role="alert"><h4>Sign-in required</h4>'+
       '<p>Sign-in is unavailable: a required script did not load.</p></div>';
   }
   if(st===401){
@@ -886,7 +889,7 @@ function errorHTML(e){
     const btn=(window.pubveraAuth&&window.pubveraAuth.enabled)
       ? '<button type="button" class="auth-btn auth-btn-primary" data-action="signIn">Sign in with Google</button>'
       : "";
-    return '<div class="errcard"><h4>Sign-in required</h4>'+
+    return '<div class="errcard" role="alert"><h4>Sign-in required</h4>'+
       '<p>Please sign in to run this analysis.</p>'+btn+'</div>';
   }
   if(st===403){
@@ -894,13 +897,13 @@ function errorHTML(e){
     // include this app, or the period's quota is used up. Upgrading is the way
     // out of both, but prices belong on the pricing page, not here.
     if(String(d.reason||"")==="app_locked")
-      return '<div class="errcard"><h4>Not included in your plan</h4>'+
+      return '<div class="errcard" role="alert"><h4>Not included in your plan</h4>'+
         '<p>Trialvera is not part of your current plan. Upgrading your plan unlocks it.</p></div>';
     let msg="You have used up the analyses included in your plan for this period.";
     const resets=resetsAtText(d.resets_at);
     if(resets) msg+=" Your quota resets on "+resets+".";
     msg+=" Upgrading your plan raises the limit.";
-    return '<div class="errcard"><h4>Usage limit reached</h4><p>'+esc(msg)+'</p></div>';
+    return '<div class="errcard" role="alert"><h4>Usage limit reached</h4><p>'+esc(msg)+'</p></div>';
   }
   if(st===503){
     // Nothing the user did. Two different things answer 503 here — the quota
@@ -909,12 +912,12 @@ function errorHTML(e){
     // second line where there is one, while the card itself says plainly that
     // the request was not rejected.
     const why=String(d.error||"").trim();
-    return '<div class="errcard"><h4>Temporarily unavailable</h4>'+
+    return '<div class="errcard" role="alert"><h4>Temporarily unavailable</h4>'+
       '<p>Please try again in a moment — nothing is wrong with your request.</p>'+
       (why?'<p class="fnote">'+esc(why)+'</p>':"")+'</div>';
   }
   const clear=st?'<button class="backbtn" data-action="clear">Clear</button>':"";
-  return '<div class="rcard"><h3 class="err">Error</h3><p>'+
+  return '<div class="rcard" role="alert"><h3 class="err">Error</h3><p>'+
     esc(e&&e.message?e.message:"Unknown error")+'</p>'+clear+'</div>';
 }
 
@@ -1129,9 +1132,11 @@ function cellText(v){
 function statusBadge(s){
   if(!s)return "";
   const colors={RECRUITING:"#2fd6a6",NOT_YET_RECRUITING:"#7dd3fc",
-    COMPLETED:"#888",TERMINATED:"#ff6b6b",WITHDRAWN:"#ff6b6b",
-    UNKNOWN:"#aaa",ACTIVE_NOT_RECRUITING:"#ffab4c"};
-  const c=colors[s]||"#aaa";
+    COMPLETED:"#aaaaaa",TERMINATED:"#ff6b6b",WITHDRAWN:"#ff6b6b",
+    UNKNOWN:"#c0c0c0",ACTIVE_NOT_RECRUITING:"#ffab4c"};
+  // Greys are 6-digit like every other colour: a 3-digit one gets no pill (see
+  // applyBadgeColors), and #888 on the tinted pill measured 3.67:1.
+  const c=colors[s]||"#c0c0c0";
   return '<span class="u-badge" data-color="'+c+'">'+esc(s.replace(/_/g," "))+'</span>';
 }
 function resultsBadge(v){
