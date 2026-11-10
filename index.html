@@ -106,7 +106,7 @@
   .keyrow input,.keyrow select{width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.1);
     border-radius:.5rem;padding:.6rem;color:#e0e0e0;font-size:.9rem}
   .keyrow select option{background:#1a1a2e}
-  .keyhint{font-size:.7rem;color:#707070;margin-top:.5rem}
+  .keyhint{font-size:.7rem;color:#bdbdbd;margin-top:.5rem}
   /* BYOK key options: the Remember box and Forget key share one wrapping row.
      The .search-box input rule above would stretch the checkbox to full width
      with 1rem padding, so it is reset here. Forget key reuses .auth-btn. */
@@ -194,7 +194,7 @@
     background:conic-gradient(var(--sc) calc(var(--p)*1%),rgba(255,255,255,.08) 0);position:relative}
   .score::before{content:"";position:absolute;inset:8px;border-radius:50%;background:#151a2e}
   .score span{position:relative}
-  details{margin-top:.8rem}summary{cursor:pointer;color:#888;font-size:.82rem}
+  details{margin-top:.8rem}summary{cursor:pointer;color:#a0a0a0;font-size:.82rem}
   pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;background:rgba(0,0,0,.35);
     border:1px solid rgba(255,255,255,.06);border-radius:.6rem;padding:.9rem;overflow:auto;max-height:320px;color:#cfe0ff;margin-top:.5rem}
   .spin{display:inline-block;width:18px;height:18px;border:3px solid rgba(255,255,255,.15);border-top-color:#00d4ff;
@@ -211,7 +211,7 @@
   .errcard h4{font-size:1rem;font-weight:700;color:#e8eef7;margin-bottom:.35rem}
   .errcard p{font-size:.86rem;color:#bdbdbd;line-height:1.6}
   /* Beats `.errcard p` on specificity, which a bare .fnote would not. */
-  .errcard p.fnote{font-size:.78rem;color:#888;margin-top:.5rem}
+  .errcard p.fnote{font-size:.78rem;color:#a0a0a0;margin-top:.5rem}
   .errcard .auth-btn{margin-top:.9rem;padding:.5rem 1.2rem;font-size:.85rem}
   .nct-hint{color:#fbbf24;font-size:.9rem}
   /* "verify at source" link on every NCT ID */
@@ -220,7 +220,7 @@
   /* one-line plain-language command description in the modal */
   .cmd-desc{font-size:.85rem;color:#98a0b8;margin:.15rem 0 .1rem}
   /* clickable example chips under modal inputs */
-  .tryrow{font-size:.78rem;color:#888;margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
+  .tryrow{font-size:.78rem;color:#a0a0a0;margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
   button.chip.ex{cursor:pointer;color:#cfd6ea;font-family:inherit;font-size:.78rem;transition:.2s}
   button.chip.ex:hover{border-color:rgba(0,212,255,.5);color:#fff;background:rgba(0,212,255,.08)}
   /* inline empty-field validation message */
@@ -229,14 +229,14 @@
   .trygrid{display:grid;gap:.4rem;flex:1 1 100%;width:100%;grid-template-columns:repeat(var(--cols,1),1fr)}
   .trygrid .chip.ex{width:100%;text-align:center}
   /* muted note under a select (e.g. export's single "studies" resource) */
-  .fnote{font-size:.78rem;color:#888;margin-top:.3rem}
+  .fnote{font-size:.78rem;color:#a0a0a0;margin-top:.3rem}
   /* Former inline style attributes of the built result HTML (a CSP with
      style-src-attr 'none' drops those). Same declarations as before; a doubled
      class where an existing rule would otherwise outrank the old inline value
      (.rcard padding, .rcard h3 font-size). Dynamic values (--cols, --p/--sc,
      badge colours) are set through CSSOM by applyTryCols / applyScoreRing /
      applyBadgeColors in the script. */
-  .u-empty{color:#888;margin-top:.6rem}
+  .u-empty{color:#a0a0a0;margin-top:.6rem}
   .u-rhead.u-rhead{padding:.7rem 1rem}
   .u-score-row{display:flex;gap:1rem;align-items:center}
   .u-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
@@ -245,8 +245,8 @@
   .u-badge{border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600;white-space:nowrap}
   .u-badge-results{background:#2fd6a634;color:#2fd6a6;border:1px solid #2fd6a655;border-radius:999px;
     padding:2px 8px;font-size:.72rem;font-weight:600}
-  .u-muted{color:#888}
-  .u-more{color:#888;font-size:.8rem}
+  .u-muted{color:#a0a0a0}
+  .u-more{color:#a0a0a0;font-size:.8rem}
   .u-nested-h3.u-nested-h3{margin-top:.8rem;font-size:.95rem}
 
   /* AI synthesis panel (glass card at the top of the results) */
@@ -254,7 +254,7 @@
     border-radius:.9rem;padding:1.2rem 1.4rem;margin-bottom:1rem;
     -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
   .ai-panel h3{color:#00d4ff;font-size:1.05rem;margin-bottom:.5rem}
-  .ai-panel h3 .meta{font-weight:400;color:#888;font-size:.78rem}
+  .ai-panel h3 .meta{font-weight:400;color:#a0a0a0;font-size:.78rem}
   .ai-panel p.sum{color:#e0e0e0;margin-bottom:.6rem}
   .ai-panel h4{font-size:.85rem;color:#9aa4bf;margin:.7rem 0 .3rem;text-transform:uppercase;letter-spacing:.04em}
   .ai-panel ul{list-style:none;padding:0}
@@ -271,13 +271,13 @@
   .model-hint{font-size:.75rem;color:#a6a6a6;margin-top:.3rem}
 
   /* Relevance-filter transparency (PRISMA-style): muted note + closed glass details */
-  .filtered-note{font-size:.8rem;color:#888;margin:.2rem 0 .4rem}
+  .filtered-note{font-size:.8rem;color:#a0a0a0;margin:.2rem 0 .4rem}
   .filtered-section{margin:.3rem 0 .8rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,171,76,.25);
     border-radius:.6rem;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
   .filtered-section summary{font-size:.8rem;color:#ffab4c;padding:.5rem .8rem;cursor:pointer;user-select:none}
   .filtered-section summary:hover{color:#ffc98a}
   .filtered-section ul.li{padding:0 .8rem .6rem;margin:0}
-  .filtered-conds{font-size:.75rem;color:#888;font-style:italic;margin-top:.15rem}
+  .filtered-conds{font-size:.75rem;color:#a0a0a0;font-style:italic;margin-top:.15rem}
 
   /* Export suite: download buttons + quick filter (glass-panel theme) */
   .meta-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;gap:12px;flex-wrap:wrap}
@@ -311,7 +311,7 @@
   th{cursor:pointer;user-select:none}
   .sortind{color:#667;font-size:.7rem}
 
-  footer{text-align:center;padding:2rem;color:#666;border-top:1px solid rgba(255,255,255,.05);font-size:.85rem}
+  footer{text-align:center;padding:2rem;color:#a0a0a0;border-top:1px solid rgba(255,255,255,.05);font-size:.85rem}
   footer a{color:#00d4ff;text-decoration:none}footer a:hover{text-decoration:underline}
   /* legal disclaimer glass panel below the footer */
   .legal{max-width:900px;margin:0 auto 2rem;padding:1rem 1.4rem;font-size:.78rem;color:#8a93a8;line-height:1.55;
