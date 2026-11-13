@@ -45,7 +45,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.a
 FROM alpine:3.24
 # ca-certificates: the CLI calls ClinicalTrials.gov / PubMed / OpenAlex / FAERS
 # over HTTPS (and LLM providers when a BYOK key is supplied).
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
+# zlib is upgraded by name for CVE-2026-4738 (1.3.2-r1 -> 1.4-r0, Grype
+# --only-fixed); a bare apk upgrade would pull in every package.
+RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=web-builder /out/server ./server
 COPY --from=cli-builder /go/bin/clinical-trials-pp-cli ./bin/clinical-trials-pp-cli
