@@ -143,7 +143,9 @@
     cursor:pointer;transition:.3s;-webkit-backdrop-filter:blur(15px);backdrop-filter:blur(15px);min-height:150px;display:flex;flex-direction:column;
     justify-content:center;align-items:center;text-align:center;border-left:4px solid var(--c)}
   .card:hover{transform:translateY(-8px);border-color:rgba(255,255,255,.3);box-shadow:0 16px 48px rgba(0,0,0,.4)}
-  .card .ic{font-size:2.6rem;margin-bottom:.7rem}
+  .card .ic{font-size:2.6rem;margin-bottom:.7rem;color:var(--c);line-height:1}
+  .card .ic .gi{width:2.6rem;height:2.6rem;display:block}
+  .modal-head h2 .gi{width:1.2em;height:1.2em;vertical-align:-.2em;margin-right:.2em}
   .card .lb{font-size:1.45rem;font-weight:600;color:var(--c)}
   .card .sub{font-size:.78rem;color:#bdbdbd;margin-top:.35rem}
 
@@ -318,6 +320,8 @@
   /* sortable result-table headers */
   th{cursor:pointer;user-select:none}
   .sortind{color:#667;font-size:.7rem}
+  .results td{white-space:normal;overflow-wrap:break-word;min-width:4.5rem;vertical-align:top}
+  .results td:first-child{white-space:nowrap;min-width:0}
 
   footer{text-align:center;padding:2rem;color:#a0a0a0;border-top:1px solid rgba(255,255,255,.05);font-size:.85rem}
   footer a{color:#00d4ff;text-decoration:none}footer a:hover{text-decoration:underline}
@@ -367,6 +371,14 @@
     .dl-group{width:100%}
     .qfilter,.phasefilter{flex:1 1 100%;width:auto;min-width:0}
     .dl-group .qfilter,.dl-group .phasefilter{width:auto;font-size:1rem}
+    /* result tables become one card per row on a phone */
+    .results table{display:block;overflow-x:visible}
+    .results thead,.results tbody,.results tr,.results td{display:block}
+    .results thead tr{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.6rem}
+    .results th{display:inline-flex;align-items:center;min-height:44px;padding:0 .75rem;border:1px solid rgba(255,255,255,.14);border-radius:999px;background:rgba(0,0,0,.25);font-size:.8rem}
+    .results tbody tr{border:1px solid rgba(255,255,255,.08);border-radius:.6rem;background:rgba(0,0,0,.18);padding:.5rem .75rem;margin-bottom:.5rem}
+    .results td{padding:.15rem 0;border-bottom:0;min-width:0;white-space:normal}
+    .results td::before{content:attr(data-label);display:inline-block;margin-right:.5rem;color:#9aa4bf;font-size:.75rem;font-weight:600}
   }
   @media(prefers-reduced-motion:reduce){
     html{scroll-behavior:auto}
@@ -411,7 +423,7 @@
   <p>Search, filter and analyse clinical trials — registry data from ClinicalTrials.gov, enriched with PubMed, OpenAlex &amp; FDA FAERS safety signals. Keyless and open, 30+ commands in six groups.</p>
   <div class="search-box">
     <label for="heroQuery" class="sr-only">Disease, drug, or NCT ID</label>
-    <input id="heroQuery" type="text" placeholder="Disease, drug, or NCT ID — e.g. 'diabetes' or 'NCT07437157'">
+    <input id="heroQuery" type="text" enterkeyhint="search" placeholder="Disease, drug, or NCT ID — e.g. 'diabetes' or 'NCT07437157'">
     <div class="keyrow">
       <label for="llmKey" class="sr-only">LLM API key (optional)</label>
       <input id="llmKey" type="password" placeholder="LLM API key (optional, BYOK)" autocomplete="off">
@@ -474,17 +486,29 @@ const API_BASE = ""; // same-origin (served by the Go server on :8091)
 const T=(k,label,ph)=>({k,label,ph:ph||"",type:"text"});
 const LIM=(def)=>({k:"limit",label:"Limit",type:"limit",def:def||10});
 
+// Group icons: inline stroke SVGs in the group colour (currentColor), hidden
+// from screen readers because the title next to them carries the meaning.
+const GI=d=>`<svg class="gi" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${d}</svg>`;
+const ICONS={
+  search:GI('<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>'),
+  pulse:GI('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
+  scale:GI('<path d="M12 3v18M8 21h8M4 7h16M4 7l-3 7h6zM20 7l-3 7h6z"/>'),
+  clipboard:GI('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/>'),
+  database:GI('<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'),
+  sliders:GI('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+};
+
 // group config: color, icon, and each command's input fields (matches the
 // server's positional-arg routing verified from the CLI --help).
 const GROUPS = {
-  "search-discovery":{icon:"🔍",title:"Search & Discovery",color:"#00d4ff",cmds:{
+  "search-discovery":{icon:ICONS.search,title:"Search & Discovery",color:"#00d4ff",cmds:{
     search:{label:"Search trials",desc:"Find clinical trials by disease, drug, or keyword.",fields:[T("query","Query","diabetes"),LIM(10)]},
     digest:{label:"Digest snapshot",desc:"Quick activity snapshot of trials for a term.",fields:[T("query","Condition / term","covid"),LIM(10)]},
     similar:{label:"Similar trials",desc:"Find trials similar to one you already know.",fields:[T("nctid","NCT ID","NCT07437157"),LIM(10)]},
     hotspots:{label:"Country hotspots",desc:"Which countries run the most trials for a condition.",fields:[T("condition","Condition","melanoma")]},
     phase3:{label:"Phase 3 trials",desc:"Late-stage (Phase 3) trials for a condition.",fields:[T("condition","Condition","alzheimer"),LIM(20)]},
   }},
-  "trial-analysis":{icon:"⚕️",title:"Trial Analysis",color:"#2fd6a6",cmds:{
+  "trial-analysis":{icon:ICONS.pulse,title:"Trial Analysis",color:"#2fd6a6",cmds:{
     risk:{label:"Risk read",desc:"Explainable risk read on one trial from registry signals.",fields:[T("nctid","NCT ID","NCT07437157")]},
     forecast:{label:"Completion forecast",desc:"Will this trial finish on time? A data-based outlook.",fields:[T("nctid","NCT ID","NCT07437157")]},
     "enrollment-check":{label:"Enrollment plausibility",desc:"Is this trial's enrollment target realistic?",fields:[T("nctid","NCT ID","NCT07437157")]},
@@ -492,7 +516,7 @@ const GROUPS = {
     safety:{label:"FDA safety signals",desc:"FDA adverse-event report counts for a drug.",fields:[T("drug","Drug","semaglutide"),LIM(10)]},
     timeline:{label:"Trial timeline",desc:"Key dates and milestones for one trial.",fields:[T("nctid","NCT ID","NCT07437157")]},
   }},
-  "comparison":{icon:"⚖️",title:"Comparison",color:"#b681ff",cmds:{
+  "comparison":{icon:ICONS.scale,title:"Comparison",color:"#b681ff",cmds:{
     compare:{label:"Compare two drugs",desc:"Compare two drugs by trial counts, phases, and sponsors.",fields:[T("drug1","Drug A","aspirin"),T("drug2","Drug B","ibuprofen")]},
     sponsors:{label:"Top sponsors",desc:"Who runs the most trials in a disease area.",fields:[T("area","Disease area","oncology"),LIM(10)]},
     velocity:{label:"Research velocity",desc:"How fast a disease area's trials are growing.",fields:[T("area","Disease area","oncology")]},
@@ -500,11 +524,11 @@ const GROUPS = {
   // tail (endless polling) and data-management sync/import (local SQLite
   // writes) are not offered here: pointless on an ephemeral-disk web deploy,
   // and the server no longer routes sync/import (removed, OWASP API5).
-  "recruiting-watch":{icon:"📋",title:"Recruiting & Watch",color:"#ffab4c",cmds:{
+  "recruiting-watch":{icon:ICONS.clipboard,title:"Recruiting & Watch",color:"#ffab4c",cmds:{
     recruiting:{label:"Recruiting trials",desc:"Trials currently recruiting for a condition.",fields:[T("condition","Condition","heart disease"),LIM(10)]},
     watch:{label:"Watch a term",desc:"Save a term to watch for new trials.",fields:[T("term","Term","glp-1")]},
   }},
-  "data-management":{icon:"💾",title:"Data Management",color:"#fbbf24",cmds:{
+  "data-management":{icon:ICONS.database,title:"Data Management",color:"#fbbf24",cmds:{
     // the CLI's only valid export/import resource is "studies" — a dropdown
     // with that single option can't produce an "unknown resource" error
     export:{label:"Export data",desc:"Download stored trial data.",fields:[{k:"resource",label:"Resource",type:"select",opts:["studies"],
@@ -512,7 +536,7 @@ const GROUPS = {
     "export-fhir":{label:"Export FHIR",desc:"Export one trial's registry data as a FHIR ResearchStudy.",fields:[T("nctid","NCT ID","NCT07437157"),
       {k:"format",label:"Format",type:"select",opts:["fhir","csv"]}]},
   }},
-  "system":{icon:"⚙️",title:"System & Info",color:"#9aa4bf",cmds:{
+  "system":{icon:ICONS.sliders,title:"System & Info",color:"#9aa4bf",cmds:{
     health:{label:"Source health",desc:"Check that all data sources are reachable.",fields:[]},
     doctor:{label:"CLI doctor",desc:"Diagnose the tool's setup and connectivity.",fields:[]},
     analytics:{label:"Local analytics",desc:"Usage statistics stored on the server.",fields:[]},
@@ -748,6 +772,15 @@ function openGroup(g){
   firstCtl.focus();
 }
 window.__close=closeModal;
+// Enter in the hero search opens Search & Discovery and runs a search when
+// there is text (ignored while an IME is still composing).
+$("#heroQuery").addEventListener("keydown",e=>{
+  if(e.key!=="Enter"||e.isComposing)return;
+  e.preventDefault();
+  const v=e.target.value.trim();
+  openGroup("search-discovery");
+  if(v)run("search-discovery","search");
+});
 // The modal's built HTML carries data-action instead of inline on*= handlers
 // (a CSP with script-src-attr 'none' blocks those): one delegated listener per
 // event on #modalContent covers the close button, the Try chips, the sign-in
@@ -1173,7 +1206,7 @@ function objTable(arr,main){
   const isMain=arr===main, shown=isMain?arr:arr.slice(0,25);
   // NOTE: truncate BEFORE esc() — slicing the escaped string could cut an
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
-  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td>${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}</tr>`).join("");
+  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td data-label="${esc(c)}">${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}</tr>`).join("");
   return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
      ${arr.length>shown.length?`<p class="u-more">…and ${arr.length-shown.length} more</p>`:""}`;
 }
