@@ -371,14 +371,14 @@ func TestRootFallbackSurvivesTheConfigCase(t *testing.T) {
 	}
 }
 
-// pinnedDefaults is the reviewed default model per provider (2026-10-01, see
-// the verification status in the registry). The parity check below cannot see
+// pinnedDefaults is the reviewed default model per provider (2026-10-01;
+// gemini re-measured 2026-11-23; see the verification status in the registry). The parity check below cannot see
 // a registry edit on its own — the page reads whatever the registry says — so
 // this table is what makes a default change a deliberate, reviewed edit.
 var pinnedDefaults = map[string]string{
 	"anthropic":  "claude-haiku-5-5",
 	"openai":     "gpt-6-luna",
-	"gemini":     "gemini-3.8-flash",
+	"gemini":     "gemini-3.5-flash-lite",
 	"groq":       "llama-3.3-70b-versatile",
 	"mistral":    "mistral-small-latest",
 	"deepseek":   "deepseek-flash",
