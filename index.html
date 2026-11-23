@@ -597,8 +597,9 @@ window.__fillPair=(a,b)=>{const d1=document.getElementById("f_drug1"),d2=documen
 // RE-MEASURE before reverting: this records Google's capacity on one day, and
 // a provider that fixes its throughput will make this line stale rather than
 // wrong. Re-measured 2026-10-01 with minimal requests: gemini-3.8-flash and
-// gemini-3.5-flash-lite answered 3/3, and they are now the only Gemini IDs in
-// the registry (providers.go).
+// gemini-3.5-flash-lite answered 3/3. Re-measured 2026-11-23: 3.5-flash-lite
+// 6/8, 3.8-flash 2/8, 3.6-flash 1/3 (misses were HTTP 503), so flash-lite is
+// now the default; the list and its order live in the registry (providers.go).
 
 // Default model and suggested models per provider. Both come from the server's
 // registry (providers.go) through /config.json, so the page holds no copy that

@@ -769,6 +769,26 @@ func TestAnthropicDefaultModelIsHaiku55(t *testing.T) {
 	}
 }
 
+// TestGeminiAndOpenAIModelListsAreTheMeasuredOnes pins the suggestion order the
+// page shows (via /config.json). Measured 2026-11-23 with minimal JSON
+// requests: gemini-3.5-flash-lite answered 6 of 8, gemini-3.8-flash 2 of 8,
+// gemini-3.6-flash 1 of 3 (every miss HTTP 503 "high demand"), so the gemini
+// list is ordered by that count; gpt-6-luna, gpt-6.2-sol, gpt-6.1-terra and
+// gpt-6.2-astra each answered 3 of 3, and gpt-6.1-luna / gpt-6.2-luna do not
+// exist (HTTP 404). Re-measure before reordering.
+func TestGeminiAndOpenAIModelListsAreTheMeasuredOnes(t *testing.T) {
+	want := map[string][]string{
+		"gemini": {"gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash"},
+		"openai": {"gpt-6-luna", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6.2-astra"},
+	}
+	for name, w := range want {
+		got := providers[name].Models
+		if strings.Join(got, ",") != strings.Join(w, ",") {
+			t.Errorf("%s models = %v, want %v", name, got, w)
+		}
+	}
+}
+
 // goodSynthJSON is a minimal valid synthesis for the stub-server tests below.
 const goodSynthJSON = `{"summary":"Thirty recruiting trials were found.","key_points":["30 trials found","largest enrollment 149"],"caveats":["registry-only signal"],"not_advice":""}`
 
