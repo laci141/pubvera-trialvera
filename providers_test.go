@@ -775,10 +775,11 @@ func TestAnthropicDefaultModelIsHaiku55(t *testing.T) {
 // gemini-3.6-flash 1 of 3 (every miss HTTP 503 "high demand"), so the gemini
 // list is ordered by that count; gpt-6-luna, gpt-6.2-sol, gpt-6.1-terra and
 // gpt-6.2-astra each answered 3 of 3, and gpt-6.1-luna / gpt-6.2-luna do not
-// exist (HTTP 404). Re-measure before reordering.
+// exist (HTTP 404). Re-measured 2026-11-24: gemini-4-hydrogen answered 10 of
+// 10 (reasoning_effort "low"), so it sits second. Re-measure before reordering.
 func TestGeminiAndOpenAIModelListsAreTheMeasuredOnes(t *testing.T) {
 	want := map[string][]string{
-		"gemini": {"gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash"},
+		"gemini": {"gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash"},
 		"openai": {"gpt-6-luna", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6.2-astra"},
 	}
 	for name, w := range want {
