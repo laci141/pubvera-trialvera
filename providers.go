@@ -666,6 +666,12 @@ type llmError struct {
 
 func (e *llmError) Error() string { return e.msg }
 
+// timeoutMessage is what the reader sees when the model did not answer
+// inside llmTimeout: what happened, and what to do about it.
+func timeoutMessage(model string) string {
+	return fmt.Sprintf("the model %s did not answer within %d seconds. Slow reasoning models (e.g. deepseek-v4-pro) can exceed this limit; try a faster model such as deepseek-flash or run the search again", model, int(llmTimeout/time.Second))
+}
+
 func newLLMError(kind, msg string) error { return &llmError{kind: kind, msg: msg} }
 
 // llmFailKindOf falls back to the catch-all so the log field always has a value.
@@ -759,6 +765,12 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 		}
 	}
 	if err != nil {
+		// Live 2026-11-24: deepseek-v4-pro (a slow reasoning model) ran out of
+		// the llmTimeout budget and the reader got "read response: context
+		// deadline exceeded" — a Go string that says nothing actionable.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, newLLMError(llmFailUpstream, timeoutMessage(model))
+		}
 		return nil, err
 	}
 	if status >= 500 {
