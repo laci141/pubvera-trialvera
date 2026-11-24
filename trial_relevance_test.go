@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,29 @@ func TestSynthesisPromptAsksWhyStopped(t *testing.T) {
 	p := synthesisPrompt("search", []string{"x"}, []byte(relevanceSource))
 	if !strings.Contains(p, "why_stopped field, give that stated reason") {
 		t.Error("prompt does not ask for the why_stopped reason")
+	}
+}
+
+// A Limit-200 search must reach the model with 60 trials, so 60 can be
+// labelled (live 2026-11-24: 163 of 188 rows said "not reviewed" at 25).
+func TestRelevanceCoversSixtyTrials(t *testing.T) {
+	if maxEntriesForLLM != 60 || maxTrialRelevance != 60 {
+		t.Fatalf("caps = %d/%d, want 60/60", maxEntriesForLLM, maxTrialRelevance)
+	}
+	var b strings.Builder
+	b.WriteString(`{"results":[`)
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"id":"NCT%08d","title":"Trial %d","conditions":["Long COVID"],"interventions":["Drug X"],"status":"COMPLETED"}`, i, i)
+	}
+	b.WriteString(`]}`)
+	p := synthesisPrompt("search", []string{"Long COVID"}, []byte(b.String()))
+	if !strings.Contains(p, "NCT00000059") || strings.Contains(p, "NCT00000060") {
+		t.Error("prompt does not carry exactly the first 60 trials")
+	}
+	if strings.Contains(p, "truncated mid-JSON") {
+		t.Error("60 trials overflowed the prompt byte cap")
 	}
 }

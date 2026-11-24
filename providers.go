@@ -227,10 +227,13 @@ const maxCLIJSONForPrompt = 56 * 1024
 
 // maxEntriesForLLM caps how many entries of each large array (results, trials,
 // sources) the LLM sees. clinical-trials entries are compact (no abstracts),
-// so 25 entries per array stay comfortably inside maxCLIJSONForPrompt. Without
+// so 60 entries per array stay comfortably inside maxCLIJSONForPrompt. Without
 // the trim, the naive byte cap could cut a large trailing array mid-JSON,
 // silently corrupting exactly the data the LLM needs.
-const maxEntriesForLLM = 25
+// Raised 25 -> 60 on 2026-11-24 so the per-trial relevance labels cover more
+// of a Limit-200 search: measured on the live exports, 60 whitelisted trial
+// rows are 29-31 KB (25 were 12-13 KB), still well under maxCLIJSONForPrompt.
+const maxEntriesForLLM = 60
 
 // largeArrayKeys are the clinical-trials CLI output keys that can carry big
 // lists worth trimming. (factors lists are short risk explanations and are

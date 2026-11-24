@@ -59,7 +59,7 @@ func entryCount(t *testing.T, obj map[string]json.RawMessage, key string) int {
 
 func TestCompactForLLMTrimsLargeArrays(t *testing.T) {
 	for _, key := range []string{"results", "trials", "sources"} {
-		got := decode(t, compactForLLM(resultsJSON(t, key, 30)))
+		got := decode(t, compactForLLM(resultsJSON(t, key, maxEntriesForLLM+5)))
 		if n := entryCount(t, got, key); n != maxEntriesForLLM {
 			t.Errorf("%s: got %d entries, want %d", key, n, maxEntriesForLLM)
 		}
@@ -91,7 +91,7 @@ func TestCompactForLLMCompareNested(t *testing.T) {
 	side := func(name string) json.RawMessage {
 		out, err := json.Marshal(map[string]any{
 			"name":   name,
-			"trials": json.RawMessage(mustField(t, resultsJSON(t, "trials", 30), "trials")),
+			"trials": json.RawMessage(mustField(t, resultsJSON(t, "trials", maxEntriesForLLM+5), "trials")),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -174,7 +174,7 @@ func TestCompactForLLMInvalidInputsUnchanged(t *testing.T) {
 }
 
 func TestSynthesisPromptUsesCompactedJSON(t *testing.T) {
-	prompt := synthesisPrompt("search", []string{"diabetes"}, resultsJSON(t, "results", 30))
+	prompt := synthesisPrompt("search", []string{"diabetes"}, resultsJSON(t, "results", maxEntriesForLLM+5))
 	if !strings.Contains(prompt, "INPUT 1: diabetes") {
 		t.Error("prompt missing the user input")
 	}
