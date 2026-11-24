@@ -754,9 +754,9 @@ func TestLLMSynthesizeRetry(t *testing.T) {
 
 // ---- Haiku 5.5 default, thinking disabled, robust Anthropic parse ----------
 
-func TestAnthropicDefaultModelIsHaiku55(t *testing.T) {
-	if got := providers["anthropic"].DefaultModel; got != "claude-haiku-5-5" {
-		t.Errorf("anthropic default = %q, want claude-haiku-5-5", got)
+func TestAnthropicDefaultModelIsSonnet55(t *testing.T) {
+	if got := providers["anthropic"].DefaultModel; got != "claude-sonnet-5-5" {
+		t.Errorf("anthropic default = %q, want claude-sonnet-5-5", got)
 	}
 	found := false
 	for _, m := range providers["anthropic"].Models {
@@ -779,8 +779,9 @@ func TestAnthropicDefaultModelIsHaiku55(t *testing.T) {
 // 10 (reasoning_effort "low"), so it sits second. Re-measure before reordering.
 func TestGeminiAndOpenAIModelListsAreTheMeasuredOnes(t *testing.T) {
 	want := map[string][]string{
-		"gemini": {"gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash"},
-		"openai": {"gpt-6-luna", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6.2-astra"},
+		"gemini":    {"gemini-4-hydrogen", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash"},
+		"openai":    {"gpt-6.2-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.1-terra"},
+		"anthropic": {"claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5", "claude-haiku-4-5"},
 	}
 	for name, w := range want {
 		got := providers[name].Models
@@ -814,7 +815,7 @@ func TestAnthropicRequestThinkingPerModel(t *testing.T) {
 		model        string
 		wantThinking bool
 	}{
-		{"", true}, // blank -> default claude-haiku-5-5
+		{"", false}, // blank -> default claude-sonnet-5-5 (thinking left on)
 		{"claude-haiku-5-5", true},
 		{"claude-sonnet-5-5", false},
 		{"claude-haiku-4-5", false},

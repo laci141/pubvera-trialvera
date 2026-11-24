@@ -376,9 +376,9 @@ func TestRootFallbackSurvivesTheConfigCase(t *testing.T) {
 // a registry edit on its own — the page reads whatever the registry says — so
 // this table is what makes a default change a deliberate, reviewed edit.
 var pinnedDefaults = map[string]string{
-	"anthropic":  "claude-haiku-5-5",
-	"openai":     "gpt-6-luna",
-	"gemini":     "gemini-3.5-flash-lite",
+	"anthropic":  "claude-sonnet-5-5",
+	"openai":     "gpt-6.2-sol",
+	"gemini":     "gemini-4-hydrogen",
 	"groq":       "llama-3.3-70b-versatile",
 	"mistral":    "mistral-small-latest",
 	"deepseek":   "deepseek-flash",

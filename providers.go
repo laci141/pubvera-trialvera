@@ -99,17 +99,20 @@ type providerSpec struct {
 // and gpt-6.2-luna do not exist, HTTP 404). gemini: 3.5-flash-lite 6/8,
 // 3.8-flash 2/8, 3.6-flash 1/3, gemini-4-hydrogen 0/15; every miss was HTTP
 // 503 "high demand", so the IDs exist but answer unevenly. flash-lite is the
-// gemini default and the gemini list is ordered by that count. Re-measured
+// gemini default and the gemini list is ordered by that count.
+// 2026-11-24 (Laci's decision, measured in Corpova on IMT/COPD study stances):
+// defaults are gpt-6.2-sol, claude-sonnet-5-5 and gemini-4-hydrogen, each
+// listed first; claude-haiku-4-5 stays listed for BYOK users. Re-measured
 // 2026-11-24 (10 minimal requests, reasoning_effort "low"): gemini-4-hydrogen
 // answered 10/10 with no 503, so it is offered second; it is a suggestion
 // only and never the default.
 var providers = map[string]providerSpec{
-	"anthropic": {BaseURL: "https://api.anthropic.com/v1", DefaultModel: "claude-haiku-5-5",
-		Models: []string{"claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"}, Style: styleAnthropic, Verified: verifiedLive},
-	"openai": {BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-6-luna",
-		Models: []string{"gpt-6-luna", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6.2-astra"}, Style: styleOpenAI, Verified: verifiedLive},
-	"gemini": {BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", DefaultModel: "gemini-3.5-flash-lite",
-		Models: []string{"gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash"}, Style: styleOpenAI, Verified: verifiedLive},
+	"anthropic": {BaseURL: "https://api.anthropic.com/v1", DefaultModel: "claude-sonnet-5-5",
+		Models: []string{"claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5", "claude-haiku-4-5"}, Style: styleAnthropic, Verified: verifiedLive},
+	"openai": {BaseURL: "https://api.openai.com/v1", DefaultModel: "gpt-6.2-sol",
+		Models: []string{"gpt-6.2-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.1-terra"}, Style: styleOpenAI, Verified: verifiedLive},
+	"gemini": {BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", DefaultModel: "gemini-4-hydrogen",
+		Models: []string{"gemini-4-hydrogen", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.6-flash"}, Style: styleOpenAI, Verified: verifiedLive},
 	"groq": {BaseURL: "https://api.groq.com/openai/v1", DefaultModel: "llama-3.3-70b-versatile",
 		Models: []string{"llama-3.3-70b-versatile"}, Style: styleOpenAI, Verified: verifiedNotRechecked},
 	"mistral": {BaseURL: "https://api.mistral.ai/v1", DefaultModel: "mistral-small-latest",
@@ -547,8 +550,11 @@ type openAIRequest struct {
 // grow with the number of trials; measured output is ~436 tokens, so this
 // leaves roughly 4.7x headroom. Raised from 1024 because a truncated reply is
 // returned as HTTP 200 with stop_reason "max_tokens" and would otherwise fail
-// only later, as a confusing JSON parse error.
-const anthropicMaxTokens = 2048
+// only later, as a confusing JSON parse error. Raised again to 8192 on
+// 2026-11-24 when claude-sonnet-5-5 became the default: Sonnet keeps thinking
+// on and thinking counts against this ceiling (Corpova runs Sonnet at 8192).
+// It is a ceiling, not a target.
+const anthropicMaxTokens = 8192
 
 // anthropicThinkingOffModel is the only model sent thinking disabled: Haiku 5.5
 // spent the whole max_tokens on thinking blocks (stop_reason max_tokens). Other
