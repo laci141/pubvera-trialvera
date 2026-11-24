@@ -159,6 +159,61 @@ type llmSynthesis struct {
 	// flagged statements that referenced data absent from the tool output. It
 	// is rendered as a visible warning in the UI.
 	GroundingNote string `json:"grounding_note,omitempty"`
+	// TrialRelevance is the model's per-trial on-topic judgement for search
+	// results (Corpova's study_stances pattern). The keyword gate in main.go
+	// matches ANY query word, so "intermittent fasting" keeps cilostazol
+	// trials for "Intermittent Claudication"; a stricter word rule was measured
+	// on live exports and dropped real Post-COVID and ELE-101 depression
+	// trials. So the model labels, nothing is hidden, and the reader sees why.
+	TrialRelevance []trialRelevance `json:"trial_relevance,omitempty"`
+	// GeneratedAt is when the server received the model's answer (RFC 3339,
+	// UTC), so screen and exports state exactly when the analysis was made.
+	GeneratedAt string `json:"generated_at,omitempty"`
+}
+
+// trialRelevance is one entry of llmSynthesis.TrialRelevance.
+type trialRelevance struct {
+	ID        string `json:"id"`
+	Relevance string `json:"relevance"`
+	Reason    string `json:"reason"`
+}
+
+// maxTrialRelevance matches maxEntriesForLLM: the model only sees that many
+// trials, so it cannot judge more.
+const maxTrialRelevance = maxEntriesForLLM
+
+// maxRelevanceReason caps one reason; the prompt asks for one short sentence.
+const maxRelevanceReason = 200
+
+var validRelevance = map[string]bool{"on_topic": true, "partial": true, "off_topic": true}
+
+// cleanTrialRelevance keeps entries whose id is an NCT ID present in the tool
+// output (an invented ID would label nothing real), whose relevance is one of
+// the three labels, and drops duplicates; the reason is trimmed and capped.
+func cleanTrialRelevance(in []trialRelevance, source []byte) []trialRelevance {
+	src := string(source)
+	seen := map[string]bool{}
+	out := make([]trialRelevance, 0, len(in))
+	for _, t := range in {
+		id := strings.ToUpper(strings.TrimSpace(t.ID))
+		rel := strings.ToLower(strings.TrimSpace(t.Relevance))
+		if !groundNCTRe.MatchString(id) || len(id) != 11 || !strings.Contains(src, id) {
+			continue
+		}
+		if !validRelevance[rel] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		reason := strings.TrimSpace(t.Reason)
+		if r := []rune(reason); len(r) > maxRelevanceReason {
+			reason = string(r[:maxRelevanceReason])
+		}
+		out = append(out, trialRelevance{ID: id, Relevance: rel, Reason: reason})
+		if len(out) >= maxTrialRelevance {
+			break
+		}
+	}
+	return out
 }
 
 // defaultNotAdvice is enforced when the model omits or blanks the field: the
@@ -342,9 +397,18 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 	if facts != "" {
 		b.WriteString("7. Any number you state must come from PRE-COMPUTED FACTS above. Do not count items yourself. If a number is not listed there, do not mention that quantity at all — describe it qualitatively instead.\n")
 	}
+	b.WriteString("8. For a trial whose status is WITHDRAWN, TERMINATED or SUSPENDED and that carries a why_stopped field, give that stated reason with its NCT ID; never guess a reason for a trial without why_stopped.\n")
+	search := command == "search"
+	if search {
+		b.WriteString("9. In trial_relevance, judge EVERY trial in the tool output against the user's input: on_topic (the trial studies it), partial (related but a different population, condition or intervention), off_topic (matched only a shared word, e.g. a drug study \"under fasting conditions\" for an \"intermittent fasting\" search). Give one short reason per trial, based only on its title, conditions and interventions.\n")
+	}
 	b.WriteString("Your response is post-validated by software: statements referencing NCT IDs, countries, or numbers absent from the tool output are removed.\n\n" +
-		"Respond with ONLY a JSON object, no markdown fences, with exactly these fields:\n" +
-		`{"summary":"2-4 plain-language sentences","key_points":["3-5 points citing concrete numbers/IDs from the tool output"],"caveats":["limitations, e.g. early phase, small N, registry-only signal"],"not_advice":"informational only, not medical advice"}`)
+		"Respond with ONLY a JSON object, no markdown fences, with exactly these fields:\n")
+	if search {
+		b.WriteString(`{"summary":"2-4 plain-language sentences","key_points":["3-5 points citing concrete numbers/IDs from the tool output"],"caveats":["limitations, e.g. early phase, small N, registry-only signal"],"trial_relevance":[{"id":"NCT ID","relevance":"on_topic|partial|off_topic","reason":"one short sentence"}],"not_advice":"informational only, not medical advice"}`)
+	} else {
+		b.WriteString(`{"summary":"2-4 plain-language sentences","key_points":["3-5 points citing concrete numbers/IDs from the tool output"],"caveats":["limitations, e.g. early phase, small N, registry-only signal"],"not_advice":"informational only, not medical advice"}`)
+	}
 	return b.String()
 }
 
@@ -724,6 +788,8 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 		return nil, newLLMError(llmFailUnparseable, "unparseable synthesis: "+sanitizeLLMError(err.Error(), key))
 	}
 	syn.Model = model
+	syn.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+	syn.TrialRelevance = cleanTrialRelevance(syn.TrialRelevance, cliJSON)
 	// Post-validation against the FULL CLI JSON (pre-compaction): statements
 	// referencing NCT IDs, countries, or numbers absent from the source are
 	// removed or flagged. Observed live failure this guards against: a caveat
@@ -1000,6 +1066,7 @@ func parseSynthesis(text string) (*llmSynthesis, error) {
 var synthesisFieldNames = map[string]bool{
 	"summary": true, "key_points": true, "caveats": true,
 	"not_advice": true, "model": true, "grounding_note": true,
+	"trial_relevance": true, "generated_at": true,
 }
 
 // normalizeSentence canonicalizes a sentence for duplicate comparison:
