@@ -274,6 +274,15 @@
   .ai-rel-none{color:#a0a0a0;border-color:rgba(255,255,255,.15)}
   .ai-rel-reason{font-size:.72rem;color:#b8bfd0;margin-top:.2rem;max-width:22rem;white-space:normal}
   .ai-rel-summary{font-size:.82rem;color:#c9d1e3;margin:.5rem 0}
+  /* "Review next 60": a second, label-only AI pass over the next rows */
+  .rel-next{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#cdd6ea;font:inherit;font-size:.85rem;
+    padding:.5rem .95rem;border-radius:.6rem;cursor:pointer;min-height:44px;max-width:100%;white-space:normal;text-align:left;margin:.2rem 0}
+  .rel-next:hover{background:rgba(255,255,255,.15);border-color:var(--c);color:#fff}
+  .rel-next:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+  .rel-next:disabled{opacity:.6;cursor:progress}
+  .rel-next-note{display:block;font-size:.8rem;color:#fbbf24;margin-top:.3rem}
+  .rel-next-note:empty{display:none}
+  .rel-pass{font-size:.78rem;color:#b8bfd0;margin:.2rem 0}
   .ai-panel ul.caveats li{border-color:rgba(251,191,36,.25);color:#e8d9b0}
   .ai-disclaimer{font-size:.8rem;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
     border-radius:.5rem;padding:.5rem .8rem;margin-top:.8rem}
@@ -806,6 +815,7 @@ mc.addEventListener("click",e=>{
   else if(a==="fillPair")window.__fillPair(b.dataset.a,b.dataset.b);
   else if(a==="signIn")pubveraSignIn();
   else if(a==="clear")document.getElementById("res").innerHTML="";
+  else if(a==="reviewNext")reviewNext(b.dataset.cmd,b);
 });
 mc.addEventListener("input",e=>{
   if(e.target.id==="f_limit")document.getElementById("lv").textContent=e.target.value;
@@ -1038,7 +1048,10 @@ async function run(g,cmd){
     // JSON, and r.json() on a plain-text body throws away the status with it.
     if(!r.ok) throw await httpError(r);
     const data=await r.json();
+    // req (the body, never the key: that rides only in the header) lets
+    // "Review next 60" repeat this exact search with a review_offset.
     lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,aiRel:buildRelIndex(data),
+      req:{g,body},reviewedTo:(data.llm_synthesis&&Number.isInteger(data.llm_synthesis.reviewed_to))?data.llm_synthesis.reviewed_to:0,reviewPasses:[],
       query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
     res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" data-action="clear">Clear</button>`;
     applyScoreRing(res);
@@ -1059,6 +1072,7 @@ function renderResult(g,cmd,payload){
   // data-exportkey scopes the live-view lookup: the export provider finds the
   // rendered rows (and the filter/sort controls) for exactly this command.
   renderRel=(lastData[cmd]&&lastData[cmd].aiRel)||null;
+  renderRelCmd=cmd;
   return head + renderSynthesis(payload) + '<div data-exportkey="'+esc(cmd)+'">' +
     resultMetaRow(cmd) + renderBody(r,rowsFromLastData(cmd)) + '</div>';
 }
@@ -1083,10 +1097,10 @@ function relChip(id,rel){
   return '<span class="ai-rel ai-rel-'+t.relevance+'">🤖 '+esc(REL_LABEL[t.relevance])+'</span>'+
     (t.reason?'<div class="ai-rel-reason">'+esc(t.reason)+'</div>':'');
 }
-function relSummary(s){
+function relSummary(s,merged){
   // Counts come from the same index the table reads, so the line and the
-  // column can never disagree.
-  const idx=buildRelIndex({llm_synthesis:s});
+  // column can never disagree; after "Review next" that is the merged index.
+  const idx=merged||buildRelIndex({llm_synthesis:s});
   if(!idx)return "";
   const list=Object.values(idx), c={on_topic:0,partial:0,off_topic:0};
   list.forEach(t=>{c[t.relevance]++;});
@@ -1101,6 +1115,97 @@ function fmtStamp(iso){
   const p=n=>String(n).padStart(2,"0"), off=-d.getTimezoneOffset(), a=Math.abs(off);
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+
     " (UTC"+(off<0?"-":"+")+p(Math.floor(a/60))+":"+p(a%60)+")";
+}
+
+// ── "Review next 60" ──
+// One AI call labels at most 60 rows inside the 60 s limit, so a Limit-200
+// search left most rows "not reviewed" (live 2026-11-24: 130 of 190 for
+// "psilocybin depression", among them the phase 3 depression trials). The
+// button repeats the same search with review_offset; the server runs a
+// label-only pass over results[offset : offset+60] and reports reviewed_to.
+// New labels are merged (a row keeps its first label) and swapped into the
+// table in place, so filters and sorting stay as the reader left them.
+let renderRelCmd="";
+const REVIEW_BATCH=60;
+function relPasses(d){
+  return (d.reviewPasses||[]).map(p=>'<p class="rel-pass">🤖 Trials '+p.from+'–'+p.to+' reviewed by '+esc(p.model||"AI")+
+    (p.generated_at?' · '+esc(fmtStamp(p.generated_at)):'')+'</p>').join("");
+}
+function relNext(cmd){
+  const d=cmd&&lastData[cmd];
+  if(!d||!d.reviewedTo||!Array.isArray(d.rows))return "";
+  let html=relPasses(d);
+  const total=d.rows.length;
+  if(d.reviewedTo<total){
+    const from=d.reviewedTo+1,to=Math.min(d.reviewedTo+REVIEW_BATCH,total);
+    html+='<button type="button" class="rel-next" data-action="reviewNext" data-cmd="'+esc(cmd)+'">🤖 Review next '+(to-from+1)+
+      ' trials ('+from+'–'+to+' of '+total+')</button><span class="rel-next-note" role="status"></span>';
+  }
+  return html;
+}
+function relBlock(s,cmd){
+  const inner=relSummary(s,renderRel)+relNext(cmd);
+  return inner?'<div class="ai-rel-block">'+inner+'</div>':"";
+}
+// mergeReview folds one review answer into lastData[cmd]. Returns the number
+// of labels added; throws when the server reports no progress, so the button
+// can never loop on the same rows.
+function mergeReview(d,s,offset){
+  const to=s&&Number.isInteger(s.reviewed_to)?s.reviewed_to:0;
+  if(to<=offset)throw new Error("the server reported no reviewed trials");
+  const add=buildRelIndex({llm_synthesis:s})||{};
+  d.aiRel=d.aiRel||{};
+  let n=0;
+  Object.keys(add).forEach(id=>{if(!d.aiRel[id]){d.aiRel[id]=add[id];n++;}});
+  (d.reviewPasses=d.reviewPasses||[]).push({from:offset+1,to:to,model:s.model||"",generated_at:s.generated_at||"",labels:n});
+  d.reviewedTo=to;
+  return n;
+}
+// refreshRel redraws the summary block and the AI cells of the current table.
+function refreshRel(cmd,msg){
+  const d=lastData[cmd],res=document.getElementById("res");
+  if(!d||!res)return;
+  renderRel=d.aiRel;
+  const blk=res.querySelector(".ai-rel-block");
+  if(blk){
+    blk.innerHTML=relSummary(null,d.aiRel)+relNext(cmd);
+    const next=blk.querySelector(".rel-next"),note=blk.querySelector(".rel-next-note");
+    if(note&&msg)note.textContent=msg;
+    else if(msg)blk.insertAdjacentHTML("beforeend",'<p class="rel-pass" role="status">'+esc(msg)+'</p>');
+    // Focus stays on the control the reader used, or on what replaced it.
+    if(next)next.focus();
+  }
+  res.querySelectorAll("[data-exportkey] tr[data-ri]").forEach(tr=>{
+    const row=d.rows[+tr.dataset.ri],td=tr.querySelector('td[data-label="AI relevance"]');
+    if(row&&td)td.innerHTML=relChip(row.id,d.aiRel);
+  });
+}
+async function reviewNext(cmd,btn){
+  // cmd comes from markup: an unknown name (or "__proto__") has no req.
+  const d=lastData[cmd];
+  if(!d||!d.req||!d.reviewedTo)return;
+  const note=btn.parentNode.querySelector(".rel-next-note");
+  const key=$("#llmKey").value.trim();
+  if(!key){if(note)note.textContent="Enter your AI key above to review more trials.";return;}
+  const offset=d.reviewedTo;
+  const body=Object.assign({},d.req.body,{review_offset:offset});
+  const headers={"Content-Type":"application/json","X-LLM-Key":key,"X-LLM-Provider":body.provider||$("#llmProvider").value};
+  Object.assign(headers,await authHeaders());
+  const label=btn.textContent;
+  btn.disabled=true;btn.textContent="⏳ Reviewing trials "+(offset+1)+"–"+Math.min(offset+REVIEW_BATCH,d.rows.length)+"…";
+  if(note)note.textContent="";
+  try{
+    const r=await fetch(API_BASE+"/api/"+d.req.g,{method:"POST",headers,body:JSON.stringify(body)});
+    if(!r.ok)throw await httpError(r);
+    const data=await r.json();
+    if(data.llm_error)throw new Error(data.llm_error);
+    const n=mergeReview(d,data.llm_synthesis,offset);
+    refreshRel(cmd,"Trials "+(offset+1)+"–"+d.reviewedTo+" reviewed: "+n+" label"+(n===1?"":"s")+" added.");
+  }catch(e){
+    btn.disabled=false;btn.textContent=label;
+    const m=String(e&&e.message?e.message:"unknown error").trim();
+    if(note)note.textContent="⚠️ Review failed: "+m+(/[.!?]$/.test(m)?"":".")+" The labels so far are kept.";
+  }
 }
 
 // AI synthesis panel: rendered at the TOP of the results when the in-process
@@ -1119,7 +1224,7 @@ function renderSynthesis(payload){
     <p class="sum">${esc(s.summary)}</p>
     ${li(s.key_points)?`<h4>Key points</h4>${li(s.key_points)}`:""}
     ${Array.isArray(s.caveats)&&s.caveats.length?`<h4>Caveats</h4><ul class="caveats">${s.caveats.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
-    ${relSummary(s)}
+    ${relBlock(s,renderRelCmd)}
     <div class="ai-disclaimer">⚕️ AI-generated summary — verify against the registry record. ${esc(s.not_advice||"Informational only — not medical advice.")}</div>
   </div>`;
   return html;
@@ -1587,6 +1692,7 @@ function exportHeader(key,rows){
   parts.push("source: ClinicalTrials.gov");
   const syn=d.response&&d.response.llm_synthesis;
   if(syn&&syn.model)parts.push("AI: "+syn.model+(syn.generated_at?" analysed "+fmtStamp(syn.generated_at):""));
+  (d.reviewPasses||[]).forEach(p=>parts.push("AI review of trials "+p.from+"–"+p.to+": "+(p.model||"AI")+(p.generated_at?" analysed "+fmtStamp(p.generated_at):"")));
   parts.push(new Date().toISOString().slice(0,10));
   return parts.join(" · ");
 }
@@ -1865,7 +1971,12 @@ function jsonExport(key){
   const syn=d.response&&d.response.llm_synthesis;
   if(syn&&syn.model){
     meta.ai={source:d.response.llm_source||"",model:syn.model,generated_at:syn.generated_at||""};
-    if(Array.isArray(syn.trial_relevance)&&syn.trial_relevance.length)meta.ai.trial_relevance=syn.trial_relevance;
+    // After "Review next" the merged labels (first pass + review passes) are
+    // what the table shows, so they are what is exported.
+    const merged=d.aiRel?Object.keys(d.aiRel).map(id=>({id:id,relevance:d.aiRel[id].relevance,reason:d.aiRel[id].reason})):[];
+    if(merged.length)meta.ai.trial_relevance=merged;
+    else if(Array.isArray(syn.trial_relevance)&&syn.trial_relevance.length)meta.ai.trial_relevance=syn.trial_relevance;
+    if(Array.isArray(d.reviewPasses)&&d.reviewPasses.length)meta.ai.review_passes=d.reviewPasses;
   }
   if(!total)return {export:meta,response:d.response};
   return {export:meta,rows:v.raw};

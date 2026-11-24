@@ -83,6 +83,11 @@ type request struct {
 	Interface string `json:"interface"`
 	Text      string `json:"text"`
 	Limit     int    `json:"limit"`
+	// ReviewOffset > 0 turns a search into a label-only review pass over the
+	// trials from that index on (the "Review next 60" button): the CLI runs
+	// again, the model labels results[offset : offset+60], and only
+	// llm_synthesis.trial_relevance is of interest to the caller.
+	ReviewOffset int `json:"review_offset"`
 }
 
 // firstNonEmpty returns the first non-blank of the given values (trimmed).
@@ -425,7 +430,15 @@ func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
 	if !ok {
 		return
 	}
-	runCLI(w, r, b, group, cmd, pos, args)
+	if req.ReviewOffset != 0 {
+		// A review pass is only meaningful for a keyed search; refusing early
+		// avoids a CLI run whose result nobody would read.
+		if req.ReviewOffset < 0 || !relevanceGatedCmds[cmd] || b.key == "" {
+			writeError(w, http.StatusBadRequest, "review_offset needs a search with an AI key and a positive offset")
+			return
+		}
+	}
+	runCLI(w, r, b, group, cmd, pos, args, req.ReviewOffset)
 }
 
 // ---- BYOK + exec (shared) ---------------------------------------------------
@@ -479,7 +492,7 @@ func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider, bodyModel
 // merges it into the response. The CLI result is always returned verbatim; an
 // LLM failure never fails the request — the response degrades to
 // llm_source:"keyless" plus a redacted llm_error.
-func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string) {
+func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string, reviewOffset int) {
 	waitStart := time.Now()
 	err := cliSem.acquire(r.Context())
 	waitMS := time.Since(waitStart).Milliseconds()
@@ -563,9 +576,32 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		// if a change ever lets filtered_out back into the prompt, the two
 		// numbers converge instead of the payload staying the smaller one.
 		llmResult := stripFilteredOut(result)
-		log.Printf("llm: call provider=%s cmd=%s payload_bytes=%d", b.provider, cmd, len(llmResult))
+		var (
+			syn        *llmSynthesis
+			err        error
+			reviewedTo int
+		)
 		llmStart := time.Now()
-		syn, err := llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, llmResult)
+		if reviewOffset > 0 {
+			slice, total, ok := sliceResults(llmResult, reviewOffset)
+			if !ok {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("review_offset %d is beyond the %d returned trials", reviewOffset, total))
+				return
+			}
+			reviewedTo = reviewOffset + resultsLen(slice)
+			log.Printf("llm: review provider=%s cmd=%s offset=%d payload_bytes=%d", b.provider, cmd, reviewOffset, len(slice))
+			syn, err = llmReview(ctx, b.provider, b.key, b.model, inputs, slice)
+		} else {
+			if cmd == "search" {
+				// The first pass shows the model results[0:maxEntriesForLLM].
+				reviewedTo = resultsLen(llmResult)
+				if reviewedTo > maxEntriesForLLM {
+					reviewedTo = maxEntriesForLLM
+				}
+			}
+			log.Printf("llm: call provider=%s cmd=%s payload_bytes=%d", b.provider, cmd, len(llmResult))
+			syn, err = llmSynthesize(ctx, b.provider, b.key, b.model, cmd, inputs, llmResult)
+		}
 		llmElapsed := time.Since(llmStart).Milliseconds()
 		if err != nil {
 			// Already sanitized/redacted by providers.go; safe for client + log-free.
@@ -574,6 +610,7 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 			resp["llm_error"] = err.Error()
 		} else {
 			log.Printf("llm: ok provider=%s cmd=%s elapsed_ms=%d", b.provider, cmd, llmElapsed)
+			syn.ReviewedTo = reviewedTo
 			resp["llm_synthesis"] = syn
 			resp["llm_source"] = "llm:" + b.provider
 		}
