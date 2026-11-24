@@ -169,6 +169,11 @@ type llmSynthesis struct {
 	// GeneratedAt is when the server received the model's answer (RFC 3339,
 	// UTC), so screen and exports state exactly when the analysis was made.
 	GeneratedAt string `json:"generated_at,omitempty"`
+	// ReviewedTo is the index (in the returned results array) one past the last
+	// trial the model was shown: the first pass shows rows [0, 60), a review
+	// pass with review_offset N shows [N, N+60). The page uses it to offer
+	// "Review next" while rows remain beyond it. Set for search only.
+	ReviewedTo int `json:"reviewed_to,omitempty"`
 }
 
 // trialRelevance is one entry of llmSynthesis.TrialRelevance.
@@ -360,6 +365,88 @@ func stripTrialEntry(entry json.RawMessage) (json.RawMessage, bool) {
 	return enc, true
 }
 
+// relevanceRule is the instruction for the per-trial labels, shared by the
+// full synthesis prompt (rule 9) and the label-only review prompt so the two
+// passes can never judge by different words.
+const relevanceRule = "In trial_relevance, judge EVERY trial in the tool output against the user's input: on_topic (the trial studies it), partial (related but a different population, condition or intervention), off_topic (matched only a shared word, e.g. a drug study \"under fasting conditions\" for an \"intermittent fasting\" search). Give one short reason per trial, based only on its title, conditions and interventions."
+
+// reviewPrompt builds the label-only prompt of a review pass ("Review next 60"):
+// the same compacted trial rows as the full prompt, only the labels asked for,
+// so the answer is short and fits the llmTimeout like the first pass.
+func reviewPrompt(inputs []string, cliJSON []byte) string {
+	cliJSON = compactForLLM(cliJSON)
+	truncated := false
+	if len(cliJSON) > maxCLIJSONForPrompt {
+		cliJSON = cliJSON[:maxCLIJSONForPrompt]
+		truncated = true
+	}
+	var b strings.Builder
+	b.WriteString("You are a clinical-trials data analyst. Below is the JSON output of a clinical-trials search tool for the user's input(s):\n")
+	for i, in := range inputs {
+		fmt.Fprintf(&b, "INPUT %d: %s\n", i+1, in)
+	}
+	b.WriteString("\nTOOL OUTPUT (may be truncated):\n")
+	b.Write(cliJSON)
+	if truncated {
+		b.WriteString("\n[NOTE: tool output was truncated mid-JSON; some entries may not be shown.]")
+	}
+	b.WriteString("\n\nSTRICT GROUNDING RULES:\n" +
+		"1. Use ONLY facts present in the tool output above.\n" +
+		"2. Use each trial's NCT ID exactly as it appears in the tool output; never invent an ID.\n" +
+		"3. " + relevanceRule + "\n" +
+		"Your response is post-validated by software: labels for NCT IDs absent from the tool output are removed.\n\n" +
+		"Respond with ONLY a JSON object, no markdown fences, with exactly this field:\n" +
+		`{"trial_relevance":[{"id":"NCT ID","relevance":"on_topic|partial|off_topic","reason":"one short sentence"}]}`)
+	return b.String()
+}
+
+// sliceResults returns the tool JSON with its "results" array cut to
+// [offset, offset+maxEntriesForLLM) plus the full length of that array. ok is
+// false when there is no results array or offset is not inside it.
+func sliceResults(raw []byte, offset int) (out []byte, total int, ok bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, 0, false
+	}
+	rawList, has := obj["results"]
+	if !has {
+		return nil, 0, false
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(rawList, &list); err != nil {
+		return nil, 0, false
+	}
+	if offset < 0 || offset >= len(list) {
+		return nil, len(list), false
+	}
+	end := offset + maxEntriesForLLM
+	if end > len(list) {
+		end = len(list)
+	}
+	enc, err := json.Marshal(list[offset:end])
+	if err != nil {
+		return nil, len(list), false
+	}
+	obj["results"] = enc
+	enc, err = json.Marshal(obj)
+	if err != nil {
+		return nil, len(list), false
+	}
+	return enc, len(list), true
+}
+
+// resultsLen is the length of the "results" array of the tool JSON (0 when the
+// shape does not apply).
+func resultsLen(raw []byte) int {
+	var obj struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return 0
+	}
+	return len(obj.Results)
+}
+
 // synthesisPrompt builds the single user message sent to the LLM. It is
 // generic across every clinical-trials command shape and hard-codes the
 // informational-only framing: the model must never tell a user what treatment
@@ -403,7 +490,7 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 	b.WriteString("8. For a trial whose status is WITHDRAWN, TERMINATED or SUSPENDED and that carries a why_stopped field, give that stated reason with its NCT ID; never guess a reason for a trial without why_stopped.\n")
 	search := command == "search"
 	if search {
-		b.WriteString("9. In trial_relevance, judge EVERY trial in the tool output against the user's input: on_topic (the trial studies it), partial (related but a different population, condition or intervention), off_topic (matched only a shared word, e.g. a drug study \"under fasting conditions\" for an \"intermittent fasting\" search). Give one short reason per trial, based only on its title, conditions and interventions.\n")
+		b.WriteString("9. " + relevanceRule + "\n")
 	}
 	b.WriteString("Your response is post-validated by software: statements referencing NCT IDs, countries, or numbers absent from the tool output are removed.\n\n" +
 		"Respond with ONLY a JSON object, no markdown fences, with exactly these fields:\n")
@@ -721,15 +808,18 @@ func llmPost(ctx context.Context, style authStyle, url, key string, body []byte)
 	return resp.StatusCode, respBody, retryable, nil
 }
 
-func llmSynthesize(ctx context.Context, provider, key, model, command string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
+// llmComplete sends one prompt to the provider and returns the model's text
+// and the model name used. It carries the whole transport policy (one retry,
+// the llmTimeout, the readable timeout and max_tokens messages) so the full
+// synthesis and the label-only review pass fail and succeed the same way.
+func llmComplete(ctx context.Context, provider, key, model, prompt string) (string, string, error) {
 	spec, ok := providers[provider]
 	if !ok { // callers validate first; belt and braces
-		return nil, newLLMError(llmFailRejected, "unknown provider")
+		return "", "", newLLMError(llmFailRejected, "unknown provider")
 	}
 	if model == "" {
 		model = spec.DefaultModel
 	}
-	prompt := synthesisPrompt(command, inputs, cliJSON)
 
 	var url string
 	var payload any
@@ -751,7 +841,7 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, newLLMError(llmFailOther, fmt.Sprintf("marshal request: %v", err))
+		return "", "", newLLMError(llmFailOther, fmt.Sprintf("marshal request: %v", err))
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
@@ -772,31 +862,65 @@ func llmSynthesize(ctx context.Context, provider, key, model, command string, in
 		// the llmTimeout budget and the reader got "read response: context
 		// deadline exceeded" — a Go string that says nothing actionable.
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, newLLMError(llmFailUpstream, timeoutMessage(model))
+			return "", "", newLLMError(llmFailUpstream, timeoutMessage(model))
 		}
-		return nil, err
+		return "", "", err
 	}
 	if status >= 500 {
 		// Their side breaking, same bucket as a transport fault. The body is
 		// provider JSON, not a message for the user: a fixed text replaces it.
-		return nil, newLLMError(llmFailUpstream, fmt.Sprintf("provider returned HTTP %d (temporarily unavailable)", status))
+		return "", "", newLLMError(llmFailUpstream, fmt.Sprintf("provider returned HTTP %d (temporarily unavailable)", status))
 	}
 	if status < 200 || status >= 300 {
 		// A 4xx is the provider refusing before any model work — bad key,
 		// unknown model, quota. Its sanitized body says which.
-		return nil, newLLMError(llmFailRejected, fmt.Sprintf("provider returned HTTP %d: %s", status, sanitizeLLMError(string(respBody), key)))
+		return "", "", newLLMError(llmFailRejected, fmt.Sprintf("provider returned HTTP %d: %s", status, sanitizeLLMError(string(respBody), key)))
 	}
 
 	if spec.Style == styleAnthropic && anthropicHitTokenLimit(respBody) {
 		// HTTP 200 but the model was cut off mid-sentence: parseSynthesis would
 		// report a JSON error and send the reader hunting for a parser bug.
-		return nil, newLLMError(llmFailUnparseable, sanitizeLLMError(
+		return "", "", newLLMError(llmFailUnparseable, sanitizeLLMError(
 			fmt.Sprintf("model response was cut off: it hit the %d-token output limit (stop_reason \"max_tokens\"); raise anthropicMaxTokens or shorten the prompt", anthropicMaxTokens), key))
 	}
 
 	text, err := extractChatText(spec.Style, respBody)
 	if err != nil {
-		return nil, newLLMError(llmFailUnparseable, sanitizeLLMError(err.Error(), key))
+		return "", "", newLLMError(llmFailUnparseable, sanitizeLLMError(err.Error(), key))
+	}
+	return text, model, nil
+}
+
+// llmReview is the label-only pass behind "Review next 60": it sends the
+// trials of cliJSON (already sliced to the rows to review) and returns only
+// the grounded trial_relevance labels with the model name and time.
+func llmReview(ctx context.Context, provider, key, model string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
+	text, usedModel, err := llmComplete(ctx, provider, key, model, reviewPrompt(inputs, cliJSON))
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := firstBalancedObject(text)
+	if !ok {
+		return nil, newLLMError(llmFailUnparseable, "unparseable review: no JSON object in model output")
+	}
+	var syn llmSynthesis
+	if err := json.Unmarshal([]byte(obj), &syn); err != nil {
+		return nil, newLLMError(llmFailUnparseable, "unparseable review: model output is not valid JSON")
+	}
+	// Only the labels are kept: a summary the model volunteers here was not
+	// asked for and was not grounded.
+	out := &llmSynthesis{
+		Model:          usedModel,
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		TrialRelevance: cleanTrialRelevance(syn.TrialRelevance, compactForLLM(cliJSON)),
+	}
+	return out, nil
+}
+
+func llmSynthesize(ctx context.Context, provider, key, model, command string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
+	text, model, err := llmComplete(ctx, provider, key, model, synthesisPrompt(command, inputs, cliJSON))
+	if err != nil {
+		return nil, err
 	}
 	syn, err := parseSynthesis(text)
 	if err != nil {
