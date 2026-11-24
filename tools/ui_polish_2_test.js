@@ -101,7 +101,10 @@ check("V1 base .results td wraps (\"" + rtd + "\"), first column stays nowrap (\
 // V2
 const tdTags = objTable.match(/<td\b[^>]*>/g) || [];
 check("V2 objTable row cells carry data-label=\"${esc(c)}\" (td tags: " + JSON.stringify(tdTags) + ")",
-  tdTags.length === 1 && tdTags[0] === '<td data-label="${esc(c)}">');
+  tdTags.length >= 1 && tdTags[0] === '<td data-label="${esc(c)}">' &&
+  // The AI relevance cell (2026-11-24) is a second td: it must carry its own
+  // label too, so the phone card layout still names every cell.
+  tdTags.every(t => /^<td data-label="[^"]+">$/.test(t)));
 
 // V3
 const cardComment = /\.dl-group \.qfilter,\s*\.dl-group \.phasefilter\{width:auto;font-size:1rem\}\s*\n\s*\/\*[^\n]*?\*\/\s*\n\s*\.results table\{/;

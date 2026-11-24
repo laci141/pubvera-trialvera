@@ -267,6 +267,13 @@
   .ai-panel ul{list-style:none;padding:0}
   .ai-panel ul li{padding:.4rem .7rem;border:1px solid rgba(255,255,255,.08);border-radius:.5rem;
     background:rgba(0,0,0,.2);margin-bottom:.4rem;font-size:.9rem}
+  .ai-rel{display:inline-block;font-size:.72rem;padding:.1rem .45rem;border-radius:999px;border:1px solid;white-space:nowrap}
+  .ai-rel-on_topic{color:#2fd6a6;border-color:rgba(47,214,166,.45);background:rgba(47,214,166,.08)}
+  .ai-rel-partial{color:#ffab4c;border-color:rgba(255,171,76,.45);background:rgba(255,171,76,.08)}
+  .ai-rel-off_topic{color:#ff8a8a;border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.08)}
+  .ai-rel-none{color:#a0a0a0;border-color:rgba(255,255,255,.15)}
+  .ai-rel-reason{font-size:.72rem;color:#b8bfd0;margin-top:.2rem;max-width:22rem;white-space:normal}
+  .ai-rel-summary{font-size:.82rem;color:#c9d1e3;margin:.5rem 0}
   .ai-panel ul.caveats li{border-color:rgba(251,191,36,.25);color:#e8d9b0}
   .ai-disclaimer{font-size:.8rem;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
     border-radius:.5rem;padding:.5rem .8rem;margin-top:.8rem}
@@ -1027,7 +1034,7 @@ async function run(g,cmd){
     // JSON, and r.json() on a plain-text body throws away the status with it.
     if(!r.ok) throw await httpError(r);
     const data=await r.json();
-    lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,
+    lastData[cmd]={rows:extractRows(data.result!=null?data.result:data),response:data,aiRel:buildRelIndex(data),
       query:body.query||body.condition||body.term||(body.drug1?body.drug1+" vs "+body.drug2:body.drug)||body.area||body.nctid||""};
     res.innerHTML=renderResult(g,cmd,data)+`<button class="backbtn" data-action="clear">Clear</button>`;
     applyScoreRing(res);
@@ -1047,8 +1054,49 @@ function renderResult(g,cmd,payload){
      <span class="chip">source <b>${esc(payload.llm_source||payload.source||"keyless")}</b></span></div></div>`;
   // data-exportkey scopes the live-view lookup: the export provider finds the
   // rendered rows (and the filter/sort controls) for exactly this command.
+  renderRel=(lastData[cmd]&&lastData[cmd].aiRel)||null;
   return head + renderSynthesis(payload) + '<div data-exportkey="'+esc(cmd)+'">' +
     resultMetaRow(cmd) + renderBody(r,rowsFromLastData(cmd)) + '</div>';
+}
+
+// ── Per-trial AI relevance (Corpova study-stance pattern) ──
+// The keyword gate keeps a trial when ANY query word matches, so the model
+// labels each trial it saw. Nothing is hidden; the label and its reason are
+// shown in the table and exported. renderRel is the map the table renderer of
+// the current result reads (set by renderResult).
+let renderRel=null;
+const REL_LABEL={on_topic:"on-topic",partial:"partly related",off_topic:"off-topic"};
+function buildRelIndex(payload){
+  const s=payload&&payload.llm_synthesis, list=s&&Array.isArray(s.trial_relevance)?s.trial_relevance:[];
+  if(!list.length)return null;
+  const m={};
+  list.forEach(t=>{if(t&&/^NCT\d{8}$/.test(t.id||"")&&REL_LABEL[t.relevance])m[t.id]={relevance:t.relevance,reason:t.reason||""};});
+  return Object.keys(m).length?m:null;
+}
+function relChip(id,rel){
+  const t=rel&&rel[id];
+  if(!t)return '<span class="ai-rel ai-rel-none">not reviewed</span>';
+  return '<span class="ai-rel ai-rel-'+t.relevance+'">🤖 '+esc(REL_LABEL[t.relevance])+'</span>'+
+    (t.reason?'<div class="ai-rel-reason">'+esc(t.reason)+'</div>':'');
+}
+function relSummary(s){
+  // Counts come from the same index the table reads, so the line and the
+  // column can never disagree.
+  const idx=buildRelIndex({llm_synthesis:s});
+  if(!idx)return "";
+  const list=Object.values(idx), c={on_topic:0,partial:0,off_topic:0};
+  list.forEach(t=>{c[t.relevance]++;});
+  return '<p class="ai-rel-summary">🤖 Relevance check of the first '+list.length+' trials: '+
+    c.on_topic+' on-topic · '+c.partial+' partly related · '+c.off_topic+' off-topic. See the AI relevance column.</p>';
+}
+// fmtStamp renders an RFC 3339 instant in the reader's local time with its
+// UTC offset, e.g. "2026-11-24 18:12 (UTC+02:00)", so the moment is exact.
+function fmtStamp(iso){
+  const d=new Date(iso);
+  if(isNaN(d.getTime()))return String(iso||"");
+  const p=n=>String(n).padStart(2,"0"), off=-d.getTimezoneOffset(), a=Math.abs(off);
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+
+    " (UTC"+(off<0?"-":"+")+p(Math.floor(a/60))+":"+p(a%60)+")";
 }
 
 // AI synthesis panel: rendered at the TOP of the results when the in-process
@@ -1062,11 +1110,12 @@ function renderSynthesis(payload){
   if(!s) return html;
   const li=a=>Array.isArray(a)&&a.length?"<ul>"+a.map(x=>`<li>${esc(x)}</li>`).join("")+"</ul>":"";
   html+=`<div class="ai-panel">
-    <h3>🤖 AI Synthesis <span class="meta">${esc(payload.llm_source||"")}${s.model?" · "+esc(s.model):""}</span></h3>
+    <h3>🤖 AI Synthesis <span class="meta">${esc(payload.llm_source||"")}${s.model?" · "+esc(s.model):""}${s.generated_at?" · analysed "+esc(fmtStamp(s.generated_at)):""}</span></h3>
     ${s.grounding_note?`<div class="grounding-note">⚠️ ${esc(s.grounding_note)}</div>`:""}
     <p class="sum">${esc(s.summary)}</p>
     ${li(s.key_points)?`<h4>Key points</h4>${li(s.key_points)}`:""}
     ${Array.isArray(s.caveats)&&s.caveats.length?`<h4>Caveats</h4><ul class="caveats">${s.caveats.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
+    ${relSummary(s)}
     <div class="ai-disclaimer">⚕️ AI-generated summary — verify against the registry record. ${esc(s.not_advice||"Informational only — not medical advice.")}</div>
   </div>`;
   return html;
@@ -1207,8 +1256,9 @@ function objTable(arr,main){
   const isMain=arr===main, shown=isMain?arr:arr.slice(0,25);
   // NOTE: truncate BEFORE esc() — slicing the escaped string could cut an
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
-  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td data-label="${esc(c)}">${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}</tr>`).join("");
-  return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
+  const rel=isMain?renderRel:null;
+  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td data-label="${esc(c)}">${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}${rel?`<td data-label="AI relevance">${relChip(o.id,rel)}</td>`:""}</tr>`).join("");
+  return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}${rel?"<th>AI relevance</th>":""}</tr></thead><tbody>${rows}</tbody></table>
      ${arr.length>shown.length?`<p class="u-more">…and ${arr.length-shown.length} more</p>`:""}`;
 }
 function nestedArrays(o,main){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length)
@@ -1370,7 +1420,7 @@ function rowsFromLastData(key){
 // extra scalar fields the row carries are appended after so nothing is lost.
 const TRIAL_COLS={id:1,title:1,status:1,phase:1,phases:1,conditions:1,interventions:1,
   enrollment:1,sponsor:1,start_date:1,completion_date:1,primary_completion_date:1,countries:1,country:1};
-function trialExportRow(r){
+function trialExportRow(r,rel){
   const out={
     "NCT ID":r.id,
     "Title":r.title||"",
@@ -1385,6 +1435,9 @@ function trialExportRow(r){
     "Completion date":r.completion_date||"",
     "Country":Array.isArray(r.countries)?r.countries.join("; "):(r.country||""),
     "URL":"https://clinicaltrials.gov/study/"+r.id};
+  if(rel){const t=rel[r.id];
+    out["AI relevance"]=t?REL_LABEL[t.relevance]:"not reviewed";
+    out["AI relevance reason"]=t?t.reason:"";}
   Object.entries(r).forEach(([k,v])=>{
     if(TRIAL_COLS[k]||v==null)return;
     if(Array.isArray(v)){if(v.every(x=>typeof x!=="object"))out[k]=v.join("; ");else if(v.every(x=>x&&typeof x==="object"&&typeof x.id==="string"&&x.id))out[k]=v.map(x=>x.id).join("; ");return;}
@@ -1441,7 +1494,8 @@ function exportRows(key){
     if(Array.isArray(v.rows)){raw=v.rows;scope=(v.filters||[]).join(" · ");}
   }
   if(!raw)raw=rowsFromLastData(key)||[];         // fallback: unfiltered module
-  return {rows:raw.length&&raw.every(isTrialRow)?raw.map(trialExportRow):raw, raw:raw, scope:scope};
+  const rel=(lastData[key]&&lastData[key].aiRel)||null;
+  return {rows:raw.length&&raw.every(isTrialRow)?raw.map(x=>trialExportRow(x,rel)):raw, raw:raw, scope:scope};
 }
 
 // ── Header labels and XLSX dates (CSV/Excel only; JSON keeps the raw keys) ──
@@ -1527,6 +1581,8 @@ function exportHeader(key,rows){
   if(typeof r.total_matching==="number"&&r.total_matching!==total)
     parts.push(r.total_matching+" matching on registry");
   parts.push("source: ClinicalTrials.gov");
+  const syn=d.response&&d.response.llm_synthesis;
+  if(syn&&syn.model)parts.push("AI: "+syn.model+(syn.generated_at?" analysed "+fmtStamp(syn.generated_at):""));
   parts.push(new Date().toISOString().slice(0,10));
   return parts.join(" · ");
 }
@@ -1800,6 +1856,13 @@ function jsonExport(key){
   if(total)meta.corpus={retrieved:total+(r.filtered_count||0),displayed:v.raw.length};
   // Optional so the shape stays unchanged when nothing was filtered.
   if(typeof r.filtered_count==="number"&&r.filtered_count>0)meta.filtered_count=r.filtered_count;
+  // Which model analysed this result and exactly when, plus its per-trial
+  // relevance labels; absent when the run had no AI synthesis.
+  const syn=d.response&&d.response.llm_synthesis;
+  if(syn&&syn.model){
+    meta.ai={source:d.response.llm_source||"",model:syn.model,generated_at:syn.generated_at||""};
+    if(Array.isArray(syn.trial_relevance)&&syn.trial_relevance.length)meta.ai.trial_relevance=syn.trial_relevance;
+  }
   if(!total)return {export:meta,response:d.response};
   return {export:meta,rows:v.raw};
 }
