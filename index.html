@@ -646,10 +646,14 @@ function updateModelHint(){
     hint.textContent="OpenRouter needs a model ID — openrouter/free routes to a free model, or use any OpenRouter model ID";
     model.placeholder="Model (required for OpenRouter)";
   }else{
-    hint.textContent="";
+    hint.textContent=SLOW_MODELS[model.value.trim()]||"";
     model.placeholder="Model (optional · default: "+(DEFAULT_MODELS[p]||"provider default")+")";
   }
 }
+// Models measured slow enough to miss the 60 s AI limit (live 2026-11-24:
+// deepseek-v4-pro gave no synthesis at Limit 30 and 200). The reader is told
+// before running, not only after the timeout.
+const SLOW_MODELS={"deepseek-v4-pro":"⚠️ deepseek-v4-pro is a slow reasoning model: it may not answer within the 60-second AI limit, and then only the trial table is shown. deepseek-flash answers reliably."};
 // Fill #llmModel with the current provider's default as a REAL editable value.
 // A user-custom model (non-empty and not a known default) is never clobbered.
 // The field is left EMPTY rather than prefilled with the provider default.
@@ -708,7 +712,7 @@ $("#llmKey").addEventListener("input",e=>byokStore(e.target.value,$("#llmRemembe
 $("#llmRemember").addEventListener("change",e=>byokStore($("#llmKey").value,e.target.checked,byokLS,byokSS));
 $("#llmForget").addEventListener("click",()=>{$("#llmKey").value="";$("#llmRemember").checked=false;byokForget(byokLS,byokSS);});
 $("#llmProvider").addEventListener("change",e=>{localStorage.setItem("ct_provider",e.target.value);applyDefaultModel();updateModelHint();fillModelOptions();});
-$("#llmModel").addEventListener("input",e=>localStorage.setItem("ct_model",e.target.value));
+$("#llmModel").addEventListener("input",e=>{localStorage.setItem("ct_model",e.target.value);updateModelHint();});
 
 // ---- build bento ----
 const bento=$("#bento");
