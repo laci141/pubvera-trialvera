@@ -1827,6 +1827,20 @@ function toCSV(rows,metaLine){
 const SOURCE_BY_CMD={safety:"FDA FAERS"};
 function sourceLabel(key){return SOURCE_BY_CMD[key]||"ClinicalTrials.gov";}
 
+// What ONE ROW of a command's table is. Trial lists and most analyses keep the
+// plain word "rows". A safety row is a reaction TERM, and one FAERS report can
+// list several terms: the psilocybin export said "153 rows" next to
+// total_reports 144, which reads as 153 reports, and the BibTeX note said
+// "Analysis of 153 records". The unit is spelled out wherever a row count is.
+const ROW_UNIT_BY_CMD={safety:"reaction term"};
+function rowUnit(key,n){const u=ROW_UNIT_BY_CMD[key];return u?u+(n===1?"":"s"):"rows";}
+function reportsPhrase(n){return typeof n==="number"?n+" report"+(n===1?"":"s"):"";}
+// ASCII-only slug for a BibTeX cite key: Zotero and Mendeley key entries by it.
+function bibSlug(s){
+  return String(s==null?"":s).normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase()
+    .replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,40).replace(/_+$/,"");
+}
+
 // The headline numbers of an analysis that has no trial list (velocity, safety,
 // sponsors, hotspots, …) live NEXT to the row array in the response, not inside
 // it. The JSON export used to keep only the rows, so a velocity file carried the
@@ -1853,10 +1867,14 @@ function exportHeader(key,rows){
   const parts=["Trialvera export"];
   parts.push(ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key));
   if(d.query)parts.push('query: "'+d.query+'"');
-  parts.push(total&&total!==shown?("showing "+shown+" of "+total+" rows"):(shown+" rows"));
+  const unit=rowUnit(key,total&&total!==shown?total:shown);
+  parts.push(total&&total!==shown?("showing "+shown+" of "+total+" "+unit):(shown+" "+unit));
   // Corpus size actually retrieved from the registry, before the relevance
-  // gate removed anything. Stated even when nothing was filtered.
-  if(total)parts.push((total+(typeof r.filtered_count==="number"?r.filtered_count:0))+" retrieved");
+  // gate removed anything. Stated even when nothing was filtered. Commands whose
+  // rows are not trials state their report count instead: "153 retrieved"
+  // next to 144 reports would be the same mix-up as "153 rows".
+  if(ROW_UNIT_BY_CMD[key]){if(reportsPhrase(r.total_reports))parts.push(reportsPhrase(r.total_reports));}
+  else if(total)parts.push((total+(typeof r.filtered_count==="number"?r.filtered_count:0))+" retrieved");
   // Spell out the gate's removals: a reader months later must not mistake a
   // filtered export for everything the registry returned.
   if(typeof r.filtered_count==="number"&&r.filtered_count>0)
@@ -2075,16 +2093,24 @@ function toBibTeX(rows){
 
 // Commands with no trial list (velocity, hotspots, …) get a dataset-style
 // @misc citation of the analysis itself.
-function analysisBibTeX(key,rows){
+function analysisBibTeX(key,rows,query,reports){
   const label=ANALYSIS_LABEL[key]||"Clinical trial analysis";
-  const y=new Date().getFullYear();
-  return "@misc{trialvera_"+key.replace(/[^A-Za-z0-9]/g,"_")+"_"+y+",\n"+
-    "  title        = {"+bibEsc(label)+"},\n"+
+  const now=new Date(), y=now.getFullYear();
+  // The cite key and title carry the query: "FDA safety signals" for psilocybin
+  // and for aspirin used to be the SAME key (trialvera_safety_2026), so Zotero
+  // and Mendeley treated the second import as a duplicate of the first.
+  const slug=bibSlug(query);
+  const n=rows?rows.length:0;
+  const unit=ROW_UNIT_BY_CMD[key];
+  const what=unit?(n+" "+rowUnit(key,n)+(reportsPhrase(reports)?" from "+reportsPhrase(reports):"")):(n+" records");
+  return "@misc{trialvera_"+key.replace(/[^A-Za-z0-9]/g,"_")+(slug?"_"+slug:"")+"_"+y+",\n"+
+    "  title        = {"+bibEsc(label+(query?": "+query:""))+"},\n"+
     "  author       = {{Trialvera}},\n"+
     "  year         = {"+y+"},\n"+
+    "  urldate      = {"+now.toISOString().slice(0,10)+"},\n"+
     "  howpublished = {Trialvera clinical trial analytics},\n"+
-    "  note         = {Analysis of "+(rows?rows.length:0)+
-      " records; "+(SOURCE_BY_CMD[key]?"data from "+SOURCE_BY_CMD[key]:"registry data from ClinicalTrials.gov")+"},\n"+
+    "  note         = {Analysis of "+what+
+      "; "+(SOURCE_BY_CMD[key]?"data from "+SOURCE_BY_CMD[key]:"registry data from ClinicalTrials.gov")+"},\n"+
     "  url          = {"+window.location.origin+"/}\n"+
     "}\n";
 }
@@ -2111,7 +2137,9 @@ function bibExport(key){
     seen.add(id);trials.push(r);
   });
   const cited=trials.length?trials:v.raw;
-  const body=trials.length?toBibTeX(trials):analysisBibTeX(key,v.raw);
+  const d=lastData[key]||{};
+  const r=(d.response&&typeof d.response.result==="object"&&d.response.result)||{};
+  const body=trials.length?toBibTeX(trials):analysisBibTeX(key,v.raw,d.query,r.total_reports);
   return "% "+exportHeader(key,cited)+"\n\n"+body;
 }
 
@@ -2136,6 +2164,8 @@ function jsonExport(key){
     query:d.query||"",filters:v.scope,
     rows_exported:v.raw.length,rows_total:total,
     source:sourceLabel(key),exported_at:new Date().toISOString()};
+  // What a row is, where it is not a trial (safety: reaction terms, not reports).
+  if(ROW_UNIT_BY_CMD[key])meta.row_unit=ROW_UNIT_BY_CMD[key];
   const summary=analysisSummary(r,v.raw);
   if(summary)meta.summary=summary;
   // How many trials the registry actually returned vs how many survived the
@@ -2149,6 +2179,14 @@ function jsonExport(key){
   const syn=d.response&&d.response.llm_synthesis;
   if(syn&&syn.model){
     meta.ai={source:d.response.llm_source||"",model:syn.model,generated_at:syn.generated_at||""};
+    // The text itself, exactly as the AI panel shows it: a JSON file used to
+    // name the model but drop what it said, so the analysis could not be quoted
+    // or audited from the file. The disclaimer travels with it.
+    if(syn.summary)meta.ai.summary=syn.summary;
+    if(Array.isArray(syn.key_points)&&syn.key_points.length)meta.ai.key_points=syn.key_points;
+    if(Array.isArray(syn.caveats)&&syn.caveats.length)meta.ai.caveats=syn.caveats;
+    if(syn.grounding_note)meta.ai.grounding_note=syn.grounding_note;
+    meta.ai.disclaimer="AI-generated summary \u2014 verify against the registry record. "+(syn.not_advice||"Informational only \u2014 not medical advice.");
     // After "Review next" the merged labels (first pass + review passes) are
     // what the table shows, so they are what is exported.
     const merged=d.aiRel?Object.keys(d.aiRel).map(id=>({id:id,relevance:d.aiRel[id].relevance,reason:d.aiRel[id].reason})):[];
@@ -2189,10 +2227,14 @@ function metaRow(text,key,filename){
   const menuId="dl-menu-"+metaRow.menuSeq;
   const item=(fmt,name,label,title)=>'<button type="button" class="dl-item" role="menuitem"'+
     (title?' title="'+esc(title)+'"':'')+' data-dl="'+fmt+'" data-key="'+esc(key)+'" data-filename="'+esc(name)+'">'+label+'</button>';
+  // FDA safety rows are FAERS reaction counts and have no Phase column, so the
+  // phase menu did nothing there (matchesPhase passes rows when idx<0) while
+  // still reading as a working filter and stamping "phase: X" into exports.
+  const phaseSel=key==="safety"?"":'<select class="phasefilter" title="Filter by phase"><option value="">All phases</option><option value="EARLY_PHASE1">Early Phase 1</option><option value="PHASE1">Phase 1</option><option value="PHASE2">Phase 2</option><option value="PHASE3">Phase 3</option><option value="PHASE4">Phase 4</option><option value="NA">NA</option></select>';
   return '<div class="meta-row"><span class="meta">'+esc(text)+'<span class="qcount"></span></span>'+
     '<span class="dl-group">'+
     '<input class="qfilter" type="text" placeholder="🔍 Filter results…">'+
-    '<select class="phasefilter" title="Filter by phase"><option value="">All phases</option><option value="EARLY_PHASE1">Early Phase 1</option><option value="PHASE1">Phase 1</option><option value="PHASE2">Phase 2</option><option value="PHASE3">Phase 3</option><option value="PHASE4">Phase 4</option><option value="NA">NA</option></select>'+
+    phaseSel+
     '<span class="dl-menu-wrap">'+
     '<button type="button" class="dl dl-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="'+menuId+'">⬇ Export ▾</button>'+
     '<span class="dl-menu" role="menu" id="'+menuId+'" hidden>'+
@@ -2208,7 +2250,7 @@ function resultMetaRow(cmd){
   const d=lastData[cmd];
   if(!d)return "";
   const n=Array.isArray(d.rows)?d.rows.length:0;
-  return metaRow((n?n+" rows":"1 result")+" · "+cmd,cmd,"trialvera-"+cmd+".json");
+  return metaRow((n?n+" "+rowUnit(cmd,n):"1 result")+" · "+cmd,cmd,"trialvera-"+cmd+".json");
 }
 
 // ── Export menu (WAI-ARIA APG menu button). Every close path ends in
@@ -2335,7 +2377,11 @@ function refreshQCount(scope){
   let shown=0;
   cand.forEach(r=>{if(r.style.display!=="none")shown++;});
   const qc=scope.querySelector(".qcount");
-  if(qc)qc.textContent=cand.length?" · "+shown+" / "+cand.length+" rows":"";
+  // Same unit as the export header: a safety table counts reaction terms.
+  const w=scope.querySelector("[data-exportkey]");
+  const key=w&&w.getAttribute("data-exportkey");
+  const unit=key?rowUnit(key,cand.length):"rows";
+  if(qc)qc.textContent=cand.length?" · "+shown+" / "+cand.length+" "+unit:"";
 }
 
 // ── Sortable columns: one delegated click handler on result-table headers —
