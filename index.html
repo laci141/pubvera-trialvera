@@ -1820,6 +1820,29 @@ function toCSV(rows,metaLine){
   return String.fromCharCode(0xFEFF)+lines.join("\r\n");
 }
 
+// Where a command's DATA comes from. Every export used to say "ClinicalTrials.gov",
+// which is true for trial lists but wrong for the FDA safety signals: those are
+// FAERS adverse-event counts (the drug name is only normalised through RxNorm).
+// A reader citing the file from its header would credit the wrong registry.
+const SOURCE_BY_CMD={safety:"FDA FAERS"};
+function sourceLabel(key){return SOURCE_BY_CMD[key]||"ClinicalTrials.gov";}
+
+// The headline numbers of an analysis that has no trial list (velocity, safety,
+// sponsors, hotspots, …) live NEXT to the row array in the response, not inside
+// it. The JSON export used to keep only the rows, so a velocity file carried the
+// per-year buckets but not the recent/prior totals or the growth percentages
+// they were computed from, and a safety file lost total_reports. Primitives only:
+// nested arrays and objects are the rows themselves. Trial lists are left alone
+// (their siblings are paging counters, already exported as corpus/filtered_count).
+function analysisSummary(result,rows){
+  if(!result||typeof result!=="object"||!Array.isArray(rows)||!rows.length)return null;
+  if(rows.some(isTrialRow)||result.drug_a)return null;
+  const out={};
+  Object.keys(result).forEach(k=>{const v=result[k];
+    if(v!=null&&typeof v!=="object")out[k]=v;});
+  return Object.keys(out).length?out:null;
+}
+
 // exportHeader is the provenance line written into every exported file:
 // app · analysis · query · "showing N of M rows" · active filters · source · date.
 function exportHeader(key,rows){
@@ -1842,7 +1865,7 @@ function exportHeader(key,rows){
   if(sc)parts.push(sc);
   if(typeof r.total_matching==="number"&&r.total_matching!==total)
     parts.push(r.total_matching+" matching on registry");
-  parts.push("source: ClinicalTrials.gov");
+  parts.push("source: "+sourceLabel(key));
   const syn=d.response&&d.response.llm_synthesis;
   if(syn&&syn.model)parts.push("AI: "+syn.model+(syn.generated_at?" analysed "+fmtStamp(syn.generated_at):""));
   (d.reviewPasses||[]).forEach(p=>parts.push("AI review of trials "+p.from+"–"+p.to+": "+(p.model||"AI")+(p.generated_at?" analysed "+fmtStamp(p.generated_at):"")));
@@ -2061,7 +2084,7 @@ function analysisBibTeX(key,rows){
     "  year         = {"+y+"},\n"+
     "  howpublished = {Trialvera clinical trial analytics},\n"+
     "  note         = {Analysis of "+(rows?rows.length:0)+
-      " records; registry data from ClinicalTrials.gov},\n"+
+      " records; "+(SOURCE_BY_CMD[key]?"data from "+SOURCE_BY_CMD[key]:"registry data from ClinicalTrials.gov")+"},\n"+
     "  url          = {"+window.location.origin+"/}\n"+
     "}\n";
 }
@@ -2112,7 +2135,9 @@ function jsonExport(key){
     analysis:ANALYSIS_LABEL[key]||((d.response&&d.response.command)||key),
     query:d.query||"",filters:v.scope,
     rows_exported:v.raw.length,rows_total:total,
-    source:"ClinicalTrials.gov",exported_at:new Date().toISOString()};
+    source:sourceLabel(key),exported_at:new Date().toISOString()};
+  const summary=analysisSummary(r,v.raw);
+  if(summary)meta.summary=summary;
   // How many trials the registry actually returned vs how many survived the
   // relevance gate. Always emitted when rows_total is known, including at
   // zero filtering: "retrieved 71, displayed 71" is itself a statement.
