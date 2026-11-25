@@ -252,6 +252,12 @@
   .u-badge{border-radius:999px;padding:2px 8px;font-size:.72rem;font-weight:600;white-space:nowrap}
   .u-badge-results{background:#2fd6a634;color:#2fd6a6;border:1px solid #2fd6a655;border-radius:999px;
     padding:2px 8px;font-size:.72rem;font-weight:600}
+  .u-flag{display:inline-block;margin-left:4px;border-radius:999px;padding:2px 8px;font-size:.72rem;
+    font-weight:600;white-space:nowrap;cursor:help}
+  .u-flag-nores{background:#f5c54226;color:#f5c542;border:1px solid #f5c54266}
+  .u-flag-stale{background:#c4a7ff26;color:#c4a7ff;border:1px solid #c4a7ff66}
+  .u-flag-legend{margin:0 0 .6rem;font-size:.8rem;color:#c8c8c8}
+  .u-flag-legend .u-flag{margin:0 4px 0 0}
   .u-muted{color:#a0a0a0}
   .u-more{color:#a0a0a0;font-size:.8rem}
   .u-nested-h3.u-nested-h3{margin-top:.8rem;font-size:.95rem}
@@ -1455,6 +1461,51 @@ function resultsBadge(v){
     ?'<span class="u-badge-results">&#10003; Results</span>'
     :"";
 }
+// Two transparency flags shown beside the status pill. Both are read from the
+// row's own registry fields against today's date, so they are hints for the
+// reader to check, not verdicts. "No results posted": a trial COMPLETED or
+// TERMINATED whose primary completion (or completion) period ended at least a
+// year ago, with has_results explicitly false; many US trials must post results
+// within 12 months of primary completion. "Stale": a trial still listed as
+// ongoing whose record was last updated more than two years ago. UNKNOWN is
+// left out because the registry's own UNKNOWN status already says the same.
+const FLAG_ONGOING=new Set(["RECRUITING","NOT_YET_RECRUITING","ENROLLING_BY_INVITATION",
+  "ACTIVE_NOT_RECRUITING","SUSPENDED"]);
+const FLAG_TEXT={
+  nores:"Completed or terminated over a year ago, but no results are posted on ClinicalTrials.gov. Many US trials must post results within 12 months of primary completion.",
+  stale:"Still listed as ongoing, but the registry record has not been updated for over 2 years, so its status may be out of date."};
+// periodEnd returns the first UTC instant after the period a partial registry
+// date names (YYYY-MM-DD, YYYY-MM or YYYY), or null. "2025-11" ends on 1 Dec.
+function periodEnd(d){
+  const m=String(d||"").trim().match(/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/);
+  if(!m)return null;
+  const y=+m[1],mo=m[2]?+m[2]-1:null,da=m[3]?+m[3]:null;
+  if(da!==null)return new Date(Date.UTC(y,mo,da+1));
+  if(mo!==null)return new Date(Date.UTC(y,mo+1,1));
+  return new Date(Date.UTC(y+1,0,1));
+}
+function yearsAfter(t,n){return new Date(Date.UTC(t.getUTCFullYear()+n,t.getUTCMonth(),t.getUTCDate()));}
+function trialFlagKeys(o,now){
+  now=now||new Date();
+  const out=[], st=String(o&&o.status||"").toUpperCase();
+  const pc=periodEnd(o.primary_completion_date||o.completion_date);
+  if((st==="COMPLETED"||st==="TERMINATED")&&o.has_results===false&&pc&&yearsAfter(pc,1)<=now)out.push("nores");
+  const lu=periodEnd(o.last_update);
+  if(FLAG_ONGOING.has(st)&&lu&&yearsAfter(lu,2)<now)out.push("stale");
+  return out;
+}
+function flagBadge(k){
+  const label=k==="nores"?"No results posted":"Stale";
+  return '<span class="u-flag u-flag-'+k+'" title="'+esc(FLAG_TEXT[k])+'">'+label+'</span>';
+}
+function trialFlags(o,now){return trialFlagKeys(o,now).map(flagBadge).join("");}
+function flagLegend(rows,now){
+  const seen=new Set();
+  rows.forEach(o=>trialFlagKeys(o,now).forEach(k=>seen.add(k)));
+  if(!seen.size)return "";
+  return '<p class="u-flag-legend">'+["nores","stale"].filter(k=>seen.has(k))
+    .map(k=>flagBadge(k)+esc(FLAG_TEXT[k])).join("<br>")+'</p>';
+}
 function objTable(arr,main){
   if(!arr.length) return `<p class="u-muted">Empty.</p>`;
   if(typeof arr[0]!=="object") return `<ul class="li">`+arr.map(x=>`<li>${nctLink(x)||urlLink(x)||esc(x)}</li>`).join("")+`</ul>`;
@@ -1466,8 +1517,10 @@ function objTable(arr,main){
   // NOTE: truncate BEFORE esc() — slicing the escaped string could cut an
   // HTML entity in half (e.g. "&amp;" → "&am") and corrupt the visible text.
   const rel=isMain?renderRel:null;
-  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td data-label="${esc(c)}">${c==="status"?statusBadge(o[c]):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}${rel?`<td data-label="AI relevance">${relChip(o.id,rel)}</td>`:""}</tr>`).join("");
-  return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}${rel?"<th>AI relevance</th>":""}</tr></thead><tbody>${rows}</tbody></table>
+  const rows=shown.map((o,i)=>`<tr${isMain?` data-ri="${i}"`:""}>${cols.map(c=>`<td data-label="${esc(c)}">${c==="status"?statusBadge(o[c])+(isMain?trialFlags(o):""):c==="has_results"?resultsBadge(o[c]):(nctLink(o[c])||urlLink(o[c])||esc(cellText(o[c]).slice(0,80)))}</td>`).join("")}${rel?`<td data-label="AI relevance">${relChip(o.id,rel)}</td>`:""}</tr>`).join("");
+  // The legend sits above the table: with up to 200 rows a legend below it is
+  // out of sight, and a title tooltip cannot be read on a touch screen.
+  return `${isMain&&cols.includes("status")?flagLegend(shown):""}<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}${rel?"<th>AI relevance</th>":""}</tr></thead><tbody>${rows}</tbody></table>
      ${arr.length>shown.length?`<p class="u-more">…and ${arr.length-shown.length} more</p>`:""}`;
 }
 function nestedArrays(o,main){return Object.entries(o).filter(([k,v])=>Array.isArray(v)&&v.length)
