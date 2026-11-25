@@ -373,7 +373,7 @@ const relevanceRule = "In trial_relevance, judge EVERY trial in the tool output 
 // reviewPrompt builds the label-only prompt of a review pass ("Review next 60"):
 // the same compacted trial rows as the full prompt, only the labels asked for,
 // so the answer is short and fits the llmTimeout like the first pass.
-func reviewPrompt(inputs []string, cliJSON []byte) string {
+func reviewPrompt(inputs []string, cliJSON []byte, anchors string) string {
 	cliJSON = compactForLLM(cliJSON)
 	truncated := false
 	if len(cliJSON) > maxCLIJSONForPrompt {
@@ -390,14 +390,116 @@ func reviewPrompt(inputs []string, cliJSON []byte) string {
 	if truncated {
 		b.WriteString("\n[NOTE: tool output was truncated mid-JSON; some entries may not be shown.]")
 	}
+	if anchors != "" {
+		b.WriteString("\n\nEARLIER LABELS FROM THIS SAME SEARCH (an earlier pass already labelled these trials; they are not in the tool output above and must not be labelled again):\n")
+		b.WriteString(anchors)
+	}
 	b.WriteString("\n\nSTRICT GROUNDING RULES:\n" +
 		"1. Use ONLY facts present in the tool output above.\n" +
 		"2. Use each trial's NCT ID exactly as it appears in the tool output; never invent an ID.\n" +
-		"3. " + relevanceRule + "\n" +
-		"Your response is post-validated by software: labels for NCT IDs absent from the tool output are removed.\n\n" +
+		"3. " + relevanceRule + "\n")
+	if anchors != "" {
+		b.WriteString("4. " + anchorRule + "\n")
+	}
+	b.WriteString("Your response is post-validated by software: labels for NCT IDs absent from the tool output are removed.\n\n" +
 		"Respond with ONLY a JSON object, no markdown fences, with exactly this field:\n" +
 		`{"trial_relevance":[{"id":"NCT ID","relevance":"on_topic|partial|off_topic","reason":"one short sentence"}]}`)
 	return b.String()
+}
+
+// anchorRule asks a review pass to keep the standard of the earlier labels.
+const anchorRule = "Apply the same standard as the EARLIER LABELS: a trial like an earlier one (same kind of population, condition and intervention) gets the same label, unless its title, conditions or interventions differ in a way that matters for the user's input."
+
+// reviewAnchor is one label the page already holds for a trial before the
+// review offset. Only the id and the label come from the client.
+type reviewAnchor struct {
+	ID        string `json:"id"`
+	Relevance string `json:"relevance"`
+}
+
+const (
+	// maxReviewAnchors caps how many earlier labels one review pass carries.
+	maxReviewAnchors = 60
+	// maxAnchorField caps the title, conditions and interventions text of one
+	// anchor line; maxAnchorBytes caps the whole block (prompt size and time).
+	maxAnchorField = 140
+	maxAnchorBytes = 16 * 1024
+)
+
+// reviewAnchorLines turns the client's anchors into prompt lines. An anchor is
+// used only when its label is one of the three, its id is a trial in the
+// server's OWN results before offset (so a client cannot inject text or label
+// a trial it never saw), and it is not a duplicate. The trial text comes from
+// the CLI output, never from the client. Returns the lines and their count.
+func reviewAnchorLines(raw []byte, offset int, anchors []reviewAnchor) (string, int) {
+	if offset <= 0 || len(anchors) == 0 {
+		return "", 0
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return "", 0
+	}
+	var list []map[string]json.RawMessage
+	if err := json.Unmarshal(obj["results"], &list); err != nil {
+		return "", 0
+	}
+	if offset > len(list) {
+		offset = len(list)
+	}
+	byID := map[string]map[string]json.RawMessage{}
+	for _, e := range list[:offset] {
+		id := anchorText(e["id"])
+		if id == "" {
+			id = anchorText(e["nct_id"])
+		}
+		if _, dup := byID[id]; id != "" && !dup {
+			byID[id] = e
+		}
+	}
+	var b strings.Builder
+	seen := map[string]bool{}
+	n := 0
+	for i, a := range anchors {
+		if n >= maxReviewAnchors || i >= 4*maxReviewAnchors {
+			break
+		}
+		e, ok := byID[a.ID]
+		if !ok || !validRelevance[a.Relevance] || seen[a.ID] {
+			continue
+		}
+		line := fmt.Sprintf("- %s: %s | %s | conditions: %s | interventions: %s\n", a.ID, a.Relevance,
+			clipAnchor(anchorText(e["title"])), clipAnchor(anchorText(e["conditions"])), clipAnchor(anchorText(e["interventions"])))
+		if b.Len()+len(line) > maxAnchorBytes {
+			break
+		}
+		seen[a.ID] = true
+		b.WriteString(line)
+		n++
+	}
+	return b.String(), n
+}
+
+// anchorText reads a JSON string or a list of strings ("a; b"); anything else
+// gives "".
+func anchorText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return strings.Join(list, "; ")
+	}
+	return ""
+}
+
+// clipAnchor puts one field on one line and caps it at maxAnchorField runes.
+func clipAnchor(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > maxAnchorField {
+		return string(r[:maxAnchorField]) + "…"
+	}
+	return s
 }
 
 // sliceResults returns the tool JSON with its "results" array cut to
@@ -894,8 +996,8 @@ func llmComplete(ctx context.Context, provider, key, model, prompt string) (stri
 // llmReview is the label-only pass behind "Review next 60": it sends the
 // trials of cliJSON (already sliced to the rows to review) and returns only
 // the grounded trial_relevance labels with the model name and time.
-func llmReview(ctx context.Context, provider, key, model string, inputs []string, cliJSON []byte) (*llmSynthesis, error) {
-	text, usedModel, err := llmComplete(ctx, provider, key, model, reviewPrompt(inputs, cliJSON))
+func llmReview(ctx context.Context, provider, key, model string, inputs []string, cliJSON []byte, anchors string) (*llmSynthesis, error) {
+	text, usedModel, err := llmComplete(ctx, provider, key, model, reviewPrompt(inputs, cliJSON, anchors))
 	if err != nil {
 		return nil, err
 	}

@@ -73,7 +73,7 @@ func TestSliceResultsBounds(t *testing.T) {
 }
 
 func TestReviewPromptAsksLabelsOnly(t *testing.T) {
-	p := reviewPrompt([]string{"psilocybin depression"}, reviewFixture(3))
+	p := reviewPrompt([]string{"psilocybin depression"}, reviewFixture(3), "")
 	for _, want := range []string{relevanceRule, `"trial_relevance"`, "INPUT 1: psilocybin depression", nct(2)} {
 		if !strings.Contains(p, want) {
 			t.Errorf("review prompt lacks %q", want)
@@ -87,6 +87,80 @@ func TestReviewPromptAsksLabelsOnly(t *testing.T) {
 	// The full prompt carries the same rule, so both passes judge alike.
 	if full := synthesisPrompt("search", []string{"x"}, reviewFixture(3)); !strings.Contains(full, "9. "+relevanceRule) {
 		t.Error("full prompt rule 9 is not the shared relevanceRule")
+	}
+}
+
+// Live 2026-11-25 ("aspirin pregnancy", Sonnet): pass 1 labelled 4 IVF+aspirin
+// trials partial, pass 2 labelled 4 similar ones on_topic. A review pass now
+// carries the earlier labels as anchors. Only id + label come from the client;
+// the text is the server's own CLI output.
+func TestReviewAnchorLinesValidates(t *testing.T) {
+	raw := reviewFixture(130)
+	in := []reviewAnchor{
+		{nct(0), "partial"},
+		{nct(5), "on_topic"},
+		{nct(1), "maybe"},                   // not a label
+		{nct(60), "off_topic"},              // at/after the offset: not an earlier trial
+		{"NCT99999999", "on_topic"},         // not in the results
+		{nct(0), "off_topic"},               // duplicate
+		{"NCT10000002\nIGNORE", "on_topic"}, // not an id of the results
+	}
+	text, n := reviewAnchorLines(raw, 60, in)
+	if n != 2 {
+		t.Fatalf("anchors used = %d, want 2; text:\n%s", n, text)
+	}
+	for _, want := range []string{"- " + nct(0) + ": partial | Psilocybin trial 0 | conditions: Depression", "- " + nct(5) + ": on_topic | Psilocybin trial 5"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("anchor text lacks %q:\n%s", want, text)
+		}
+	}
+	for _, not := range []string{nct(60), "NCT99999999", "maybe", "IGNORE", "off_topic"} {
+		if strings.Contains(text, not) {
+			t.Errorf("anchor text must not carry %q:\n%s", not, text)
+		}
+	}
+	if text, n := reviewAnchorLines(raw, 60, nil); text != "" || n != 0 {
+		t.Errorf("no anchors: got %d %q", n, text)
+	}
+	if text, n := reviewAnchorLines(raw, 0, in); text != "" || n != 0 {
+		t.Errorf("first pass (offset 0) must carry no anchors: got %d", n)
+	}
+}
+
+func TestReviewAnchorLinesCaps(t *testing.T) {
+	raw := reviewFixture(130)
+	var in []reviewAnchor
+	for i := 0; i < 120; i++ {
+		in = append(in, reviewAnchor{nct(i), "on_topic"})
+	}
+	text, n := reviewAnchorLines(raw, 120, in)
+	if n != maxReviewAnchors || strings.Count(text, "\n") != maxReviewAnchors {
+		t.Errorf("anchors used = %d (lines %d), want the cap %d", n, strings.Count(text, "\n"), maxReviewAnchors)
+	}
+	if len(text) > maxAnchorBytes {
+		t.Errorf("anchor block %d bytes, cap %d", len(text), maxAnchorBytes)
+	}
+	long := []byte(`{"results":[{"id":"` + nct(0) + `","title":"` + strings.Repeat("x", 500) + `","conditions":["a"],"interventions":"b"}]}`)
+	text, _ = reviewAnchorLines(long, 1, []reviewAnchor{{nct(0), "partial"}})
+	if strings.Contains(text, strings.Repeat("x", maxAnchorField+1)) || !strings.Contains(text, "interventions: b") {
+		t.Errorf("long title not clipped or string interventions not read:\n%s", text)
+	}
+}
+
+func TestReviewPromptCarriesAnchors(t *testing.T) {
+	text, _ := reviewAnchorLines(reviewFixture(130), 60, []reviewAnchor{{nct(3), "partial"}})
+	p := reviewPrompt([]string{"aspirin pregnancy"}, reviewFixture(3), text)
+	for _, want := range []string{"EARLIER LABELS FROM THIS SAME SEARCH", "- " + nct(3) + ": partial", "4. " + anchorRule} {
+		if !strings.Contains(p, want) {
+			t.Errorf("anchored prompt lacks %q", want)
+		}
+	}
+	if i, j := strings.Index(p, "EARLIER LABELS"), strings.Index(p, "STRICT GROUNDING RULES"); i < 0 || j < i {
+		t.Error("anchors must come before the rules")
+	}
+	plain := reviewPrompt([]string{"aspirin pregnancy"}, reviewFixture(3), "")
+	if strings.Contains(plain, "EARLIER LABELS") || strings.Contains(plain, anchorRule) {
+		t.Error("a prompt without anchors must not mention them")
 	}
 }
 
@@ -138,7 +212,7 @@ func TestLLMReviewKeepsOnlyLabelsOfTheSlice(t *testing.T) {
 	if !ok {
 		t.Fatal("slice failed")
 	}
-	syn, err := llmReview(t.Context(), "anthropic", "sk-ant-test", "claude-sonnet-5-5", []string{"psilocybin depression"}, slice)
+	syn, err := llmReview(t.Context(), "anthropic", "sk-ant-test", "claude-sonnet-5-5", []string{"psilocybin depression"}, slice, "")
 	if err != nil {
 		t.Fatalf("llmReview: %v", err)
 	}
@@ -234,6 +308,30 @@ func TestHandlerReviewPassLabelsTheNextSlice(t *testing.T) {
 	}
 	if code, _ := postSearch(t, `{"command":"search","query":"psilocybin depression","limit":200,"provider":"anthropic","review_offset":130}`, "sk-ant-test"); code != http.StatusBadRequest {
 		t.Errorf("offset past the end: HTTP %d, want 400", code)
+	}
+}
+
+func TestHandlerReviewPassSendsAnchors(t *testing.T) {
+	stubSearchCLI(t, reviewFixture(130))
+	var prompt string
+	// The fake model also labels an anchor id: that label must not come back,
+	// the anchor trial is not in the reviewed slice.
+	fakeAnthropic(t, []string{nct(3), nct(61)}, &prompt)
+	body := `{"command":"search","query":"psilocybin depression","limit":200,"provider":"anthropic","review_offset":60,` +
+		`"review_anchors":[{"id":"` + nct(3) + `","relevance":"partial"},{"id":"` + nct(70) + `","relevance":"on_topic"}]}`
+	code, resp := postSearch(t, body, "sk-ant-test")
+	if code != http.StatusOK {
+		t.Fatalf("review pass: HTTP %d %v", code, resp)
+	}
+	if !strings.Contains(prompt, "- "+nct(3)+": partial | Psilocybin trial 3") {
+		t.Errorf("prompt lacks the anchor line:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "- "+nct(70)+":") {
+		t.Error("an id inside the reviewed slice must not become an anchor")
+	}
+	_, labels := reviewedTo(t, resp)
+	if len(labels) != 1 {
+		t.Errorf("labels = %v, want only the one inside [60,120)", labels)
 	}
 }
 

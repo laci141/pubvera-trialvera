@@ -35,9 +35,9 @@ const sandbox = {
   fetch: async (url, opts) => { calls.push({ url, opts }); return reply; },
 };
 vm.runInNewContext(escSrc + "\n" + relSrc +
-  "\n__expose.f={buildRelIndex,relSummary,relNext,relBlock,relSteps,relStepList,mergeReview,reviewNext,REVIEW_BATCH};",
+  "\n__expose.f={buildRelIndex,relSummary,relNext,relBlock,relSteps,relStepList,relAnchors,mergeReview,reviewNext,REVIEW_BATCH,REL_ANCHORS};",
   sandbox, { filename: "review_next.js" });
-const { buildRelIndex, relSummary, relNext, relBlock, relSteps, relStepList, mergeReview, reviewNext, REVIEW_BATCH } = sandbox.__expose.f;
+const { buildRelIndex, relSummary, relNext, relBlock, relSteps, relStepList, relAnchors, mergeReview, reviewNext, REVIEW_BATCH, REL_ANCHORS } = sandbox.__expose.f;
 
 let failed = 0;
 function check(label, ok, detail) {
@@ -58,6 +58,24 @@ function fresh() {
 }
 
 check("batch size is 60", REVIEW_BATCH === 60);
+
+// Anchors (live 2026-11-25: pass 1 called IVF+aspirin trials partial, pass 2
+// on_topic): the review pass carries earlier labels, spread over the labels.
+{
+  const lab = ["on_topic", "on_topic", "on_topic", "partial", "off_topic"];
+  const rel = {};
+  rows.slice(0, 120).forEach((r, i) => { rel[r.id] = { relevance: lab[i % 5], reason: "x" }; });
+  const dd = { rows, aiRel: rel };
+  const a = relAnchors(dd, 60);
+  check("anchors come only from rows before the offset", a.length > 0 && a.every(x => rows.slice(0, 60).some(r => r.id === x.id)), a.length);
+  check("anchors carry id and label only", a.every(x => Object.keys(x).join() === "id,relevance"));
+  check("anchors start with partial, on-topic, off-topic in turn", a[0].relevance === "partial" && a[1].relevance === "on_topic" && a[2].relevance === "off_topic", a.slice(0, 3));
+  check("all 60 earlier labels fit under the cap", a.length === 60, a.length);
+  const b = relAnchors(dd, 120);
+  const cnt = k => b.filter(x => x.relevance === k).length;
+  check("cap is 60, split evenly 20/20/20 over the three labels", b.length === REL_ANCHORS && REL_ANCHORS === 60 && cnt("partial") === 20 && cnt("off_topic") === 20 && cnt("on_topic") === 20, [b.length, cnt("partial"), cnt("on_topic"), cnt("off_topic")]);
+  check("no labels: no anchors", relAnchors({ rows, aiRel: {} }, 60).length === 0);
+}
 
 let d = fresh();
 let btn = relNext("search");
@@ -129,6 +147,7 @@ const fakeBtn = { textContent: "▶ Step 2 of 4: check trials 61–120", disable
   const body = c && JSON.parse(c.opts.body);
   check("request goes to the same group endpoint", c && c.url === "/api/search-discovery", c && c.url);
   check("request repeats the search with review_offset 60", body && body.review_offset === 60 && body.query === "psilocybin depression" && body.limit === 200, body);
+  check("request carries the earlier labels as anchors", body && Array.isArray(body.review_anchors) && body.review_anchors.length === 60 && body.review_anchors[0].relevance === "on_topic", body && body.review_anchors && body.review_anchors.length);
   check("key travels only in the header", c && c.opts.headers["X-LLM-Key"] === "sk-ant-test" && !JSON.stringify(body).includes("sk-ant"));
   check("provider header from the original run", c && c.opts.headers["X-LLM-Provider"] === "anthropic");
   check("answer merged into lastData", d.reviewedTo === 120 && Object.keys(d.aiRel).length === 120);
