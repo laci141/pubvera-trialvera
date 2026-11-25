@@ -1213,6 +1213,26 @@ function relBlock(s,cmd){
   const inner=relSummary(s,renderRel)+(d?relPasses(d):"");
   return inner?'<div class="ai-rel-block">'+inner+'</div>':"";
 }
+// relAnchors picks up to REL_ANCHORS labels the reader already has (rows
+// before offset), taken in turn from partial, on-topic and off-topic, so the
+// next pass sees the standard used so far (live 2026-11-25: pass 1 called 4
+// IVF+aspirin trials partial, pass 2 called 4 similar ones on-topic). Only id
+// and label are sent; the server adds the trial text from its own run.
+const REL_ANCHORS=60;
+function relAnchors(d,offset){
+  const by={partial:[],on_topic:[],off_topic:[]};
+  (d.rows||[]).slice(0,offset).forEach(r=>{
+    const t=r&&d.aiRel&&Object.prototype.hasOwnProperty.call(d.aiRel,r.id)?d.aiRel[r.id]:null;
+    if(t&&by[t.relevance])by[t.relevance].push({id:r.id,relevance:t.relevance});
+  });
+  const lists=[by.partial,by.on_topic,by.off_topic],out=[];
+  for(let i=0;out.length<REL_ANCHORS;i++){
+    let added=false;
+    lists.forEach(l=>{if(i<l.length&&out.length<REL_ANCHORS){out.push(l[i]);added=true;}});
+    if(!added)break;
+  }
+  return out;
+}
 // mergeReview folds one review answer into lastData[cmd]. Returns the number
 // of labels added; throws when the server reports no progress, so the button
 // can never loop on the same rows.
@@ -1262,7 +1282,7 @@ async function reviewNext(cmd,btn){
   const key=$("#llmKey").value.trim();
   if(!key){if(note)note.textContent="Enter your AI key above to review more trials.";return;}
   const offset=d.reviewedTo;
-  const body=Object.assign({},d.req.body,{review_offset:offset});
+  const body=Object.assign({},d.req.body,{review_offset:offset,review_anchors:relAnchors(d,offset)});
   const headers={"Content-Type":"application/json","X-LLM-Key":key,"X-LLM-Provider":body.provider||$("#llmProvider").value};
   Object.assign(headers,await authHeaders());
   const label=btn.textContent,range=(offset+1)+"–"+Math.min(offset+REVIEW_BATCH,d.rows.length);

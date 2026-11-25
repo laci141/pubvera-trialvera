@@ -88,6 +88,12 @@ type request struct {
 	// again, the model labels results[offset : offset+60], and only
 	// llm_synthesis.trial_relevance is of interest to the caller.
 	ReviewOffset int `json:"review_offset"`
+	// ReviewAnchors (review passes only) are labels the page already holds for
+	// trials before ReviewOffset: id + label only. The server adds the trial
+	// text from its own CLI run, so the next pass applies the same standard
+	// (live 2026-11-25: pass 1 called 4 IVF+aspirin trials partial, pass 2
+	// called 4 similar ones on_topic).
+	ReviewAnchors []reviewAnchor `json:"review_anchors"`
 }
 
 // firstNonEmpty returns the first non-blank of the given values (trimmed).
@@ -438,7 +444,7 @@ func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
 			return
 		}
 	}
-	runCLI(w, r, b, group, cmd, pos, args, req.ReviewOffset)
+	runCLI(w, r, b, group, cmd, pos, args, req.ReviewOffset, req.ReviewAnchors)
 }
 
 // ---- BYOK + exec (shared) ---------------------------------------------------
@@ -492,7 +498,7 @@ func extractBYOK(w http.ResponseWriter, r *http.Request, bodyProvider, bodyModel
 // merges it into the response. The CLI result is always returned verbatim; an
 // LLM failure never fails the request — the response degrades to
 // llm_source:"keyless" plus a redacted llm_error.
-func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string, reviewOffset int) {
+func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, inputs, args []string, reviewOffset int, anchors []reviewAnchor) {
 	waitStart := time.Now()
 	err := cliSem.acquire(r.Context())
 	waitMS := time.Since(waitStart).Milliseconds()
@@ -589,8 +595,9 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 				return
 			}
 			reviewedTo = reviewOffset + resultsLen(slice)
-			log.Printf("llm: review provider=%s cmd=%s offset=%d payload_bytes=%d", b.provider, cmd, reviewOffset, len(slice))
-			syn, err = llmReview(ctx, b.provider, b.key, b.model, inputs, slice)
+			anchorText, anchorCount := reviewAnchorLines(llmResult, reviewOffset, anchors)
+			log.Printf("llm: review provider=%s cmd=%s offset=%d payload_bytes=%d anchors=%d", b.provider, cmd, reviewOffset, len(slice), anchorCount)
+			syn, err = llmReview(ctx, b.provider, b.key, b.model, inputs, slice, anchorText)
 		} else {
 			if cmd == "search" {
 				// The first pass shows the model results[0:maxEntriesForLLM].
