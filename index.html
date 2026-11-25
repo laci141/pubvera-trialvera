@@ -274,14 +274,45 @@
   .ai-rel-none{color:#a0a0a0;border-color:rgba(255,255,255,.15)}
   .ai-rel-reason{font-size:.72rem;color:#b8bfd0;margin-top:.2rem;max-width:22rem;white-space:normal}
   .ai-rel-summary{font-size:.82rem;color:#c9d1e3;margin:.5rem 0}
-  /* "Review next 60": a second, label-only AI pass over the next rows */
-  .rel-next{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#cdd6ea;font:inherit;font-size:.85rem;
-    padding:.5rem .95rem;border-radius:.6rem;cursor:pointer;min-height:44px;max-width:100%;white-space:normal;text-align:left;margin:.2rem 0}
-  .rel-next:hover{background:rgba(255,255,255,.15);border-color:var(--c);color:#fff}
-  .rel-next:focus-visible{outline:2px solid var(--c);outline-offset:2px}
-  .rel-next:disabled{opacity:.6;cursor:progress}
-  .rel-next-note{display:block;font-size:.8rem;color:#fbbf24;margin-top:.3rem}
+  /* "Check every trial with AI": the step box under the AI disclaimer, right
+     above the Export bar. One AI call labels at most 60 trials, so a Limit-200
+     search needs up to 4 steps; the box shows every step (done / next /
+     waiting, in words as well as colour), a progress bar, ONE big button for
+     the next step, and says that one Export at the end holds every label. */
+  .rel-steps{margin-top:.9rem;padding:1rem 1.1rem;border:2px solid rgba(0,212,255,.55);border-radius:.8rem;
+    background:rgba(0,212,255,.06)}
+  .ai-panel .rel-steps-h{font-size:1.05rem;color:#e8f9ff;margin:0 0 .35rem;text-transform:none;letter-spacing:0}
+  .rel-steps-intro{font-size:.9rem;color:#cdd6ea;margin:0 0 .8rem;line-height:1.5}
+  .rel-steps ol.rel-steps-list{list-style:none;padding:0;margin:0 0 .6rem;display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(6.5rem,1fr));gap:.45rem}
+  .rel-steps ol.rel-steps-list li{margin:0;padding:.5rem .4rem;border-radius:.55rem;text-align:center;font-size:.8rem;
+    display:flex;flex-direction:column;gap:.1rem;background:transparent}
+  .rs-n{font-size:.78rem}
+  .rs-r{font-size:1rem;font-weight:600}
+  .rs-s{font-size:.8rem}
+  .rel-steps ol.rel-steps-list li.rs-done{color:#2fd6a6;border:1px solid rgba(47,214,166,.55);background:rgba(47,214,166,.1)}
+  .rel-steps ol.rel-steps-list li.rs-next{color:#7fe7ff;border:2px solid #00d4ff;background:rgba(0,212,255,.12)}
+  .rel-steps ol.rel-steps-list li.rs-wait{color:#b8bfd0;border:1px dashed rgba(255,255,255,.3)}
+  .rel-steps-bar{display:block;width:100%;height:.5rem;margin:.2rem 0 .25rem;border:none;border-radius:.25rem;
+    background:rgba(255,255,255,.12);accent-color:#2fd6a6;-webkit-appearance:none;appearance:none}
+  .rel-steps-bar::-webkit-progress-bar{background:rgba(255,255,255,.12);border-radius:.25rem}
+  .rel-steps-bar::-webkit-progress-value{background:#2fd6a6;border-radius:.25rem}
+  .rel-steps-bar::-moz-progress-bar{background:#2fd6a6;border-radius:.25rem}
+  .rel-steps-count{font-size:.8rem;color:#cdd6ea;margin:0 0 .7rem}
+  .rel-next{display:block;width:100%;min-height:48px;padding:.7rem 1rem;border:none;border-radius:.6rem;cursor:pointer;
+    background:linear-gradient(90deg,#00d4ff,#7c3aed);color:#000;font:inherit;font-size:1rem;font-weight:600;
+    white-space:normal;text-align:center}
+  .rel-next:hover{filter:brightness(1.1)}
+  .rel-next:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  .rel-next:disabled{opacity:.7;cursor:progress}
+  .rel-next-note{display:block;font-size:.85rem;color:#fbbf24;margin-top:.4rem}
   .rel-next-note:empty{display:none}
+  .rel-steps-ready{font-size:1rem;font-weight:600;color:#2fd6a6;margin:0 0 .4rem}
+  .rel-steps-ready:focus{outline:2px solid #2fd6a6;outline-offset:2px}
+  .rel-steps-export{font-size:.9rem;color:#cdd6ea;margin:.8rem 0 0;padding-top:.7rem;border-top:1px solid rgba(255,255,255,.12)}
+  .rel-steps-export b{color:#2fd6a6}
+  .rel-steps.rel-steps-err{border-color:rgba(255,107,107,.7)}
+  .dl-trigger.dl-ready{border:2px solid #2fd6a6;color:#2fd6a6}
   .rel-pass{font-size:.78rem;color:#b8bfd0;margin:.2rem 0}
   .ai-panel ul.caveats li{border-color:rgba(251,191,36,.25);color:#e8d9b0}
   .ai-disclaimer{font-size:.8rem;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
@@ -1131,20 +1162,55 @@ function relPasses(d){
   return (d.reviewPasses||[]).map(p=>'<p class="rel-pass">🤖 Trials '+p.from+'–'+p.to+' reviewed by '+esc(p.model||"AI")+
     (p.generated_at?' · '+esc(fmtStamp(p.generated_at)):'')+'</p>').join("");
 }
+// relSteps lists the steps of one result: step 1 is the first AI answer
+// (rows 1..F), every later step is one review pass of REVIEW_BATCH rows.
+function relStepList(d){
+  const total=d.rows.length;
+  const first=(d.reviewPasses&&d.reviewPasses.length)?d.reviewPasses[0].from-1:d.reviewedTo;
+  const steps=[{from:1,to:Math.min(first,total)}];
+  for(let f=first;f<total;f+=REVIEW_BATCH)steps.push({from:f+1,to:Math.min(f+REVIEW_BATCH,total)});
+  let nextSeen=false;
+  steps.forEach((st,i)=>{
+    st.n=i+1;
+    st.state=st.to<=d.reviewedTo?"done":(nextSeen?"wait":(nextSeen=true,"next"));
+  });
+  return steps;
+}
+// relNext is the ONE button for the next step (empty when every row is done).
 function relNext(cmd){
   const d=cmd&&lastData[cmd];
   if(!d||!d.reviewedTo||!Array.isArray(d.rows))return "";
-  let html=relPasses(d);
-  const total=d.rows.length;
-  if(d.reviewedTo<total){
-    const from=d.reviewedTo+1,to=Math.min(d.reviewedTo+REVIEW_BATCH,total);
-    html+='<button type="button" class="rel-next" data-action="reviewNext" data-cmd="'+esc(cmd)+'">🤖 Review next '+(to-from+1)+
-      ' trials ('+from+'–'+to+' of '+total+')</button><span class="rel-next-note" role="status"></span>';
-  }
-  return html;
+  const steps=relStepList(d),nx=steps.find(st=>st.state==="next");
+  if(!nx)return "";
+  return '<button type="button" class="rel-next" data-action="reviewNext" data-cmd="'+esc(cmd)+'">▶ Step '+nx.n+' of '+steps.length+
+    ': check trials '+nx.from+'–'+nx.to+'</button><span class="rel-next-note" role="status"></span>';
+}
+const REL_STATE={done:"✓ done",next:"▶ next",wait:"waiting"};
+function relSteps(cmd){
+  const d=cmd&&lastData[cmd];
+  if(!d||!d.reviewedTo||!Array.isArray(d.rows))return "";
+  const total=d.rows.length,steps=relStepList(d);
+  if(steps.length<2)return "";
+  const left=steps.filter(st=>st.state!=="done").length,done=!left;
+  const list=steps.map(st=>'<li class="rs rs-'+st.state+'"'+(st.state==="next"?' aria-current="step"':'')+'>'+
+    '<span class="rs-n">Step '+st.n+'</span><span class="rs-r">'+st.from+'–'+st.to+'</span><span class="rs-s">'+REL_STATE[st.state]+'</span></li>').join("");
+  const checked=Math.min(d.reviewedTo,total);
+  return '<section class="rel-steps'+(done?' rel-steps-done':'')+'" aria-label="Check every trial with AI">'+
+    '<h4 class="rel-steps-h">'+(done?'✅ All '+total+' trials checked with AI':'🧭 Check every trial with AI — '+steps.length+' steps')+'</h4>'+
+    (done?'':'<p class="rel-steps-intro">One AI step checks up to '+REVIEW_BATCH+' trials. The AI has checked trials 1–'+checked+
+      '. Press the big button once for each step that is left ('+left+'). Each step takes about 30–60 seconds and uses your own AI key. '+
+      'The labels appear in the AI relevance column of the table.</p>')+
+    '<ol class="rel-steps-list">'+list+'</ol>'+
+    '<progress class="rel-steps-bar" max="'+total+'" value="'+checked+'" aria-label="Trials checked by AI">'+checked+' of '+total+'</progress>'+
+    '<p class="rel-steps-count">'+checked+' of '+total+' trials checked</p>'+
+    (done?'<p class="rel-steps-ready" tabindex="-1">✓ Every trial has an AI label. Now press Export below.</p>':relNext(cmd))+
+    '<p class="rel-steps-export">⬇ <b>Last: press Export once</b> (just below this box) and pick a format. '+
+    'One file holds every label checked so far, so there is no need to download after each step.</p>'+
+    '</section>';
 }
 function relBlock(s,cmd){
-  const inner=relSummary(s,renderRel)+relNext(cmd);
+  const d=cmd&&lastData[cmd];
+  const inner=relSummary(s,renderRel)+(d?relPasses(d):"");
   return inner?'<div class="ai-rel-block">'+inner+'</div>':"";
 }
 // mergeReview folds one review answer into lastData[cmd]. Returns the number
@@ -1167,13 +1233,21 @@ function refreshRel(cmd,msg){
   if(!d||!res)return;
   renderRel=d.aiRel;
   const blk=res.querySelector(".ai-rel-block");
-  if(blk){
-    blk.innerHTML=relSummary(null,d.aiRel)+relNext(cmd);
-    const next=blk.querySelector(".rel-next"),note=blk.querySelector(".rel-next-note");
+  if(blk)blk.innerHTML=relSummary(null,d.aiRel)+relPasses(d);
+  const box=res.querySelector(".rel-steps");
+  if(box){
+    box.outerHTML=relSteps(cmd);
+    const nb=res.querySelector(".rel-steps");
+    const next=nb&&nb.querySelector(".rel-next"),note=nb&&nb.querySelector(".rel-next-note"),ready=nb&&nb.querySelector(".rel-steps-ready");
     if(note&&msg)note.textContent=msg;
-    else if(msg)blk.insertAdjacentHTML("beforeend",'<p class="rel-pass" role="status">'+esc(msg)+'</p>');
+    else if(nb&&msg)nb.querySelector(".rel-steps-count").insertAdjacentHTML("afterend",'<p class="rel-pass" role="status">'+esc(msg)+'</p>');
     // Focus stays on the control the reader used, or on what replaced it.
     if(next)next.focus();
+    else if(ready)ready.focus();
+    // All steps done: the Export button of this result is marked as the last step.
+    if(ready)res.querySelectorAll("[data-exportkey]").forEach(w=>{
+      if(w.dataset.exportkey===cmd){const t=w.querySelector(".dl-trigger");if(t)t.classList.add("dl-ready");}
+    });
   }
   res.querySelectorAll("[data-exportkey] tr[data-ri]").forEach(tr=>{
     const row=d.rows[+tr.dataset.ri],td=tr.querySelector('td[data-label="AI relevance"]');
@@ -1191,8 +1265,10 @@ async function reviewNext(cmd,btn){
   const body=Object.assign({},d.req.body,{review_offset:offset});
   const headers={"Content-Type":"application/json","X-LLM-Key":key,"X-LLM-Provider":body.provider||$("#llmProvider").value};
   Object.assign(headers,await authHeaders());
-  const label=btn.textContent;
-  btn.disabled=true;btn.textContent="⏳ Reviewing trials "+(offset+1)+"–"+Math.min(offset+REVIEW_BATCH,d.rows.length)+"…";
+  const label=btn.textContent,range=(offset+1)+"–"+Math.min(offset+REVIEW_BATCH,d.rows.length);
+  const box=btn.closest?btn.closest(".rel-steps"):null;
+  if(box)box.classList.remove("rel-steps-err");
+  btn.disabled=true;btn.textContent="⏳ Checking trials "+range+"… about 30–60 seconds";
   if(note)note.textContent="";
   try{
     const r=await fetch(API_BASE+"/api/"+d.req.g,{method:"POST",headers,body:JSON.stringify(body)});
@@ -1202,7 +1278,10 @@ async function reviewNext(cmd,btn){
     const n=mergeReview(d,data.llm_synthesis,offset);
     refreshRel(cmd,"Trials "+(offset+1)+"–"+d.reviewedTo+" reviewed: "+n+" label"+(n===1?"":"s")+" added.");
   }catch(e){
-    btn.disabled=false;btn.textContent=label;
+    btn.disabled=false;btn.textContent="↻ Try again: "+label.replace(/^▶\s*/,"");
+    if(box)box.classList.add("rel-steps-err");
+    // A disabled button loses focus; give it back so the retry is one key away.
+    if(btn.focus)btn.focus();
     const m=String(e&&e.message?e.message:"unknown error").trim();
     if(note)note.textContent="⚠️ Review failed: "+m+(/[.!?]$/.test(m)?"":".")+" The labels so far are kept.";
   }
@@ -1226,6 +1305,7 @@ function renderSynthesis(payload){
     ${Array.isArray(s.caveats)&&s.caveats.length?`<h4>Caveats</h4><ul class="caveats">${s.caveats.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
     ${relBlock(s,renderRelCmd)}
     <div class="ai-disclaimer">⚕️ AI-generated summary — verify against the registry record. ${esc(s.not_advice||"Informational only — not medical advice.")}</div>
+    ${relSteps(renderRelCmd)}
   </div>`;
   return html;
 }
