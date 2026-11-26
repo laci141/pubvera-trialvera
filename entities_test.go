@@ -136,3 +136,35 @@ func TestHandlerRecruitingDecodesEntities(t *testing.T) {
 		t.Errorf("result not decoded: %s", res)
 	}
 }
+
+func TestDecodeEntitiesKeepsKeyOrder(t *testing.T) {
+	got := decodeEntities([]byte(`{"id":"NCT1","title":"A&amp;B","status":"S","phase":"P"}`))
+	want := `{"id":"NCT1","title":"A&B","status":"S","phase":"P"}`
+	if string(got) != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestDecodeEntitiesKeepsNestedKeyOrder(t *testing.T) {
+	got := decodeEntities([]byte(`{"z":{"z":"a&#39;b","a":1,"m":[{"z":"c&#39;d","a":true,"m":null}]},"a":[{"z":2,"a":"e&#39;f","m":"g"}],"m":"h"}`))
+	want := `{"z":{"z":"a'b","a":1,"m":[{"z":"c'd","a":true,"m":null}]},"a":[{"z":2,"a":"e'f","m":"g"}],"m":"h"}`
+	if string(got) != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestDecodeEntitiesEntityKeyKeepsTextAndOrder(t *testing.T) {
+	got := decodeEntities([]byte(`{"z":"1","a&amp;b":"x&amp;y","b":"2"}`))
+	want := `{"z":"1","a&amp;b":"x&y","b":"2"}`
+	if string(got) != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestDecodeEntitiesNumberLiteralText(t *testing.T) {
+	got := decodeEntities([]byte(`{"p":1.50,"e":1e3,"c":"&amp;"}`))
+	want := `{"p":1.50,"e":1e3,"c":"&"}`
+	if string(got) != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
