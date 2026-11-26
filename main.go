@@ -560,6 +560,9 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 	var result json.RawMessage
 	if json.Valid(raw) {
 		result = raw
+		// Registry text arrives HTML-escaped (Sjogren&#39;s); decode it once
+		// before the gate, the LLM prompt and the response.
+		result = decodeEntities(result)
 		// Web-side relevance gate (search only): partition off-topic trials
 		// out of result.results BEFORE both display and the LLM prompt below.
 		// Best-effort — any doubt passes the JSON through unchanged.
