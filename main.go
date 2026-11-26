@@ -382,11 +382,26 @@ func preflight(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// noLLMGroups / noLLMCmds mark where the LLM synthesis is skipped even with a
-// key: data-management (export/export-fhir) moves data around and
-// tail polls a stream — a summary adds nothing over the raw output there.
-var noLLMGroups = map[string]bool{"data-management": true}
+// LLM synthesis is an ALLOWLIST (fail-safe default): only groups in llmGroups
+// get a summary with a BYOK key. An unlisted or forgotten group gets no LLM
+// call, so it fails closed and costs the caller nothing.
+// noLLMGroups records the explicit "no" decisions, so the completeness test
+// can tell "decided no" from "forgotten":
+//   - data-management (export/export-fhir) moves data around;
+//   - system returns diagnostics, static info or feedback receipts.
+//
+// noLLMCmds: tail polls a stream; a summary adds nothing over the raw output.
+var llmGroups = map[string]bool{
+	"search-discovery": true,
+	"trial-analysis":   true,
+	"comparison":       true,
+	"recruiting-watch": true,
+}
+var noLLMGroups = map[string]bool{"data-management": true, "system": true}
 var noLLMCmds = map[string]bool{"tail": true}
+
+// skipLLM reports whether the LLM synthesis is skipped for group/cmd.
+func skipLLM(group, cmd string) bool { return !llmGroups[group] || noLLMCmds[cmd] }
 
 func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
 	setCORS(w)
@@ -577,7 +592,7 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 		"llm_source": "keyless",
 		"result":     result,
 	}
-	if b.key != "" && !noLLMGroups[group] && !noLLMCmds[cmd] {
+	if b.key != "" && !skipLLM(group, cmd) {
 		// payload_bytes is here to be greppable against the gate's kept_bytes:
 		// if a change ever lets filtered_out back into the prompt, the two
 		// numbers converge instead of the payload staying the smaller one.
