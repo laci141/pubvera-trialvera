@@ -47,7 +47,9 @@ FROM alpine:3.24
 # over HTTPS (and LLM providers when a BYOK key is supplied).
 # zlib is upgraded by name for CVE-2026-4738 (1.3.2-r1 -> 1.4-r0, Grype
 # --only-fixed); a bare apk upgrade would pull in every package.
-RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib && adduser -D -u 10001 app
+# OpenSSL CVEs (libcrypto3, libssl3) are fixed in 3.5.9-r1; both are upgraded
+# by name with zlib, never a bare apk upgrade.
+RUN apk add --no-cache ca-certificates && apk upgrade --no-cache zlib libcrypto3 libssl3 && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=web-builder /out/server ./server
 COPY --from=cli-builder /go/bin/clinical-trials-pp-cli ./bin/clinical-trials-pp-cli
