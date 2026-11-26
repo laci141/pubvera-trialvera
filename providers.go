@@ -440,7 +440,7 @@ func reviewAnchorLines(raw []byte, offset int, anchors []reviewAnchor) (string, 
 		return "", 0
 	}
 	var list []map[string]json.RawMessage
-	if err := json.Unmarshal(obj["results"], &list); err != nil {
+	if err := json.Unmarshal(obj[trialListKey(obj)], &list); err != nil {
 		return "", 0
 	}
 	if offset > len(list) {
@@ -502,15 +502,28 @@ func clipAnchor(s string) string {
 	return s
 }
 
-// sliceResults returns the tool JSON with its "results" array cut to
-// [offset, offset+maxEntriesForLLM) plus the full length of that array. ok is
-// false when there is no results array or offset is not inside it.
+// trialListKey names the trial array of a tool JSON: search returns
+// "results", recruiting returns "trials" (cli-src/internal/cli/recruiting.go).
+func trialListKey(obj map[string]json.RawMessage) string {
+	if _, has := obj["results"]; !has {
+		if _, has := obj["trials"]; has {
+			return "trials"
+		}
+	}
+	return "results"
+}
+
+// sliceResults returns the tool JSON with its trial array ("results", or
+// "trials" for recruiting) cut to [offset, offset+maxEntriesForLLM) plus the
+// full length of that array. ok is false when there is no trial array or
+// offset is not inside it.
 func sliceResults(raw []byte, offset int) (out []byte, total int, ok bool) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, 0, false
 	}
-	rawList, has := obj["results"]
+	key := trialListKey(obj)
+	rawList, has := obj[key]
 	if !has {
 		return nil, 0, false
 	}
@@ -529,7 +542,7 @@ func sliceResults(raw []byte, offset int) (out []byte, total int, ok bool) {
 	if err != nil {
 		return nil, len(list), false
 	}
-	obj["results"] = enc
+	obj[key] = enc
 	enc, err = json.Marshal(obj)
 	if err != nil {
 		return nil, len(list), false
@@ -537,16 +550,18 @@ func sliceResults(raw []byte, offset int) (out []byte, total int, ok bool) {
 	return enc, len(list), true
 }
 
-// resultsLen is the length of the "results" array of the tool JSON (0 when the
-// shape does not apply).
+// resultsLen is the length of the trial array ("results", or "trials" for
+// recruiting) of the tool JSON (0 when the shape does not apply).
 func resultsLen(raw []byte) int {
-	var obj struct {
-		Results []json.RawMessage `json:"results"`
-	}
+	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return 0
 	}
-	return len(obj.Results)
+	var list []json.RawMessage
+	if err := json.Unmarshal(obj[trialListKey(obj)], &list); err != nil {
+		return 0
+	}
+	return len(list)
 }
 
 // synthesisPrompt builds the single user message sent to the LLM. It is
@@ -590,7 +605,7 @@ func synthesisPrompt(command string, inputs []string, cliJSON []byte) string {
 		b.WriteString("7. Any number you state must come from PRE-COMPUTED FACTS above. Do not count items yourself. If a number is not listed there, do not mention that quantity at all — describe it qualitatively instead.\n")
 	}
 	b.WriteString("8. For a trial whose status is WITHDRAWN, TERMINATED or SUSPENDED and that carries a why_stopped field, give that stated reason with its NCT ID; never guess a reason for a trial without why_stopped.\n")
-	search := command == "search"
+	search := relevanceCmds[command]
 	if search {
 		b.WriteString("9. " + relevanceRule + "\n")
 	}
