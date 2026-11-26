@@ -452,10 +452,10 @@ func handleGroup(w http.ResponseWriter, r *http.Request, group string) {
 		return
 	}
 	if req.ReviewOffset != 0 {
-		// A review pass is only meaningful for a keyed search; refusing early
-		// avoids a CLI run whose result nobody would read.
-		if req.ReviewOffset < 0 || !relevanceGatedCmds[cmd] || b.key == "" {
-			writeError(w, http.StatusBadRequest, "review_offset needs a search with an AI key and a positive offset")
+		// A review pass is only meaningful for a keyed trial-list command;
+		// refusing early avoids a CLI run whose result nobody would read.
+		if req.ReviewOffset < 0 || !relevanceCmds[cmd] || b.key == "" {
+			writeError(w, http.StatusBadRequest, "review_offset needs a search or recruiting list with an AI key and a positive offset")
 			return
 		}
 	}
@@ -614,7 +614,7 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 			log.Printf("llm: review provider=%s cmd=%s offset=%d payload_bytes=%d anchors=%d", b.provider, cmd, reviewOffset, len(slice), anchorCount)
 			syn, err = llmReview(ctx, b.provider, b.key, b.model, inputs, slice, anchorText)
 		} else {
-			if cmd == "search" {
+			if relevanceCmds[cmd] {
 				// The first pass shows the model results[0:maxEntriesForLLM].
 				reviewedTo = resultsLen(llmResult)
 				if reviewedTo > maxEntriesForLLM {
@@ -655,6 +655,14 @@ func runCLI(w http.ResponseWriter, r *http.Request, b byok, group, cmd string, i
 // Only search: digest's JSON is {term,total,recruiting,newest[],…} with no
 // results[]/conditions[] to judge (verified in cli-src/internal/cli/digest.go).
 var relevanceGatedCmds = map[string]bool{"search": true}
+
+// relevanceCmds names the commands whose AI answer carries per-trial relevance
+// labels (trial_relevance) and that accept "Review next" passes
+// (review_offset). Both return a trial list for a free-text query, so a label
+// per trial makes sense; live 2026-11-26 a recruiting "long covid" list held
+// healthy-volunteer, allopurinol and dysphagia-registry trials. This is NOT the
+// keyword gate above, which stays search-only.
+var relevanceCmds = map[string]bool{"search": true, "recruiting": true}
 
 // gateStopwords are English filler words dropped from the query before
 // matching. Most are under the 3-char length floor anyway; listed in full so
