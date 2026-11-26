@@ -634,3 +634,57 @@ func TestDataManagementRejectsSyncAndImport(t *testing.T) {
 		t.Errorf("data-management commands = %v, want [export export-fhir]", got)
 	}
 }
+
+// Every group must be an explicit LLM decision: allowed or explicitly denied.
+// A forgotten group would fail closed anyway, but this makes the choice visible.
+func TestLLMGroupPolicyIsComplete(t *testing.T) {
+	if len(groups) < 6 {
+		t.Fatalf("command table has %d groups, want at least 6", len(groups))
+	}
+	for g := range groups {
+		in, out := llmGroups[g], noLLMGroups[g]
+		switch {
+		case in && out:
+			t.Errorf("group %q is in both llmGroups and noLLMGroups", g)
+		case !in && !out:
+			t.Errorf("group %q is in neither llmGroups nor noLLMGroups", g)
+		}
+	}
+	for name, m := range map[string]map[string]bool{"llmGroups": llmGroups, "noLLMGroups": noLLMGroups} {
+		for g := range m {
+			if _, ok := groups[g]; !ok {
+				t.Errorf("%s holds %q, which is not in the command table", name, g)
+			}
+		}
+	}
+}
+
+func TestSkipLLM(t *testing.T) {
+	if n := len(groups["system"]); n < 8 {
+		t.Fatalf("system group has %d commands, want at least 8", n)
+	}
+	for _, g := range []string{"system", "data-management"} {
+		for cmd := range groups[g] {
+			if !skipLLM(g, cmd) {
+				t.Errorf("skipLLM(%q, %q) = false, want true", g, cmd)
+			}
+		}
+	}
+	tests := []struct {
+		group, cmd string
+		want       bool
+	}{
+		{"recruiting-watch", "tail", true},
+		{"search-discovery", "tail", true},
+		{"no-such-group", "search", true},
+		{"search-discovery", "search", false},
+		{"recruiting-watch", "recruiting", false},
+		{"trial-analysis", "risk", false},
+		{"comparison", "compare", false},
+	}
+	for _, tc := range tests {
+		if got := skipLLM(tc.group, tc.cmd); got != tc.want {
+			t.Errorf("skipLLM(%q, %q) = %v, want %v", tc.group, tc.cmd, got, tc.want)
+		}
+	}
+}
